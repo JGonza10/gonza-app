@@ -367,7 +367,8 @@ def delete_caja(cid):
     cur.execute("DELETE FROM caja WHERE id = %s;", (cid,))
     conn.commit()
     conn.close()
-    return jsonify({"mensaje": "Eliminado"})# ─── RUTAS: PAGOS A PLAZOS ────────────────────────────────────────────────────
+    return jsonify({"mensaje": "Eliminado"})
+# ─── RUTAS: PAGOS A PLAZOS ────────────────────────────────────────────────────
 
 @app.route("/api/plazos", methods=["GET"])
 def get_plazos():
@@ -378,10 +379,60 @@ def get_plazos():
     conn.close()
     return jsonify(list(rows))
 
+@app.route("/api/plazos", methods=["POST"])
+@requiere_rol("administrador", "analista")
+def add_plazo():
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO pagos_plazos (material, costo, meses_total, meses_pagados, cuota, abonado)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id;
+    """, (
+        data["material"],
+        data.get("costo"),
+        data["meses_total"],
+        data.get("meses_pagados", 0),
+        data.get("cuota"),
+        data.get("abonado", 0),
+    ))
+    nuevo_id = cur.fetchone()["id"]
+    conn.commit()
+    conn.close()
+    return jsonify({"id": nuevo_id}), 201
+
+@app.route("/api/plazos/<int:pid>", methods=["PATCH"])
+@requiere_rol("administrador", "analista")
+def update_plazo(pid):
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE pagos_plazos
+        SET material = %s, costo = %s, meses_total = %s, meses_pagados = %s, cuota = %s, abonado = %s
+        WHERE id = %s;
+    """, (
+        data["material"], data.get("costo"), data["meses_total"],
+        data.get("meses_pagados", 0), data.get("cuota"), data.get("abonado", 0), pid
+    ))
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Actualizado"})
+
+@app.route("/api/plazos/<int:pid>", methods=["DELETE"])
+@requiere_rol("administrador", "analista")
+def delete_plazo(pid):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM pagos_plazos WHERE id = %s;", (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Eliminado"})
+
 @app.route("/api/plazos/<int:pid>/abonar", methods=["PATCH"])
 @requiere_rol("administrador", "analista")
 def abonar_plazo(pid):
-
     """Registra un abono mensual al artículo a plazos."""
     conn = get_db()
     cur = conn.cursor()
@@ -396,7 +447,6 @@ def abonar_plazo(pid):
     conn.commit()
     conn.close()
     return jsonify(dict(result))
-
 # ─── RUTA: RESUMEN ────────────────────────────────────────────────────────────
 
 @app.route("/api/resumen", methods=["GET"])

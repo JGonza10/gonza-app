@@ -464,9 +464,15 @@ function ModCaja() {
     </div>
   );
 }
+
 // ── MÓDULO: PAGOS A PLAZOS ────────────────────────────────────────────────────
 function ModPagosPlazos() {
   const { data: plazos, loading, reload } = useApiData("/api/plazos");
+  const [f, setF] = useState({ material: "", costo: "", meses_total: "", cuota: "" });
+  const [saving, setSaving] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editF, setEditF] = useState({});
+  const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   async function handleAbonar(pid) {
     try {
@@ -475,37 +481,125 @@ function ModPagosPlazos() {
     } catch (e) { alert("Error: " + e.message); }
   }
 
+  async function handleAgregar() {
+    if (!f.material || !f.meses_total) return alert("Material y número de meses son requeridos");
+    setSaving(true);
+    try {
+      await api("/api/plazos", {
+        method: "POST",
+        body: JSON.stringify({
+          material: f.material,
+          costo: f.costo ? parseFloat(f.costo) : null,
+          meses_total: parseInt(f.meses_total),
+          meses_pagados: 0,
+          cuota: f.cuota ? parseFloat(f.cuota) : null,
+          abonado: 0,
+        }),
+      });
+      setF({ material: "", costo: "", meses_total: "", cuota: "" });
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  }
+
+  function empezarEdicion(p) {
+    setEditId(p.id);
+    setEditF({
+      material: p.material, costo: p.costo ?? "", meses_total: p.meses_total,
+      meses_pagados: p.meses_pagados, cuota: p.cuota ?? "", abonado: p.abonado ?? 0,
+    });
+  }
+
+  async function guardarEdicion(pid) {
+    try {
+      await api(`/api/plazos/${pid}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          material: editF.material,
+          costo: editF.costo === "" ? null : parseFloat(editF.costo),
+          meses_total: parseInt(editF.meses_total),
+          meses_pagados: parseInt(editF.meses_pagados),
+          cuota: editF.cuota === "" ? null : parseFloat(editF.cuota),
+          abonado: parseFloat(editF.abonado || 0),
+        }),
+      });
+      setEditId(null);
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+  }
+
+  async function handleBorrar(pid) {
+    if (!window.confirm("¿Eliminar este artículo a plazos?")) return;
+    try {
+      await api(`/api/plazos/${pid}`, { method: "DELETE" });
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+  }
+
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando plazos...</p>;
   return (
     <div>
       <SectionTitle>Pagos a plazos</SectionTitle>
-      <Card>
-        <Tabla
-          headers={["Material", "Costo", "Meses", "Pagados", "Pendientes", "Cuota", "Abonado", "Restante", "Avance", "Acción"]}
-          rows={plazos.map(p => {
-            const pend = p.meses_total - p.meses_pagados;
-            const rest = (p.costo || 0) - (p.abonado || 0);
-            const pct = p.meses_total ? Math.round((p.meses_pagados / p.meses_total) * 100) : 0;
-            return [
-              p.material, fmt(p.costo), p.meses_total, p.meses_pagados, pend,
-              fmt(p.cuota), fmt(p.abonado), fmt(rest),
-              <div key={`bar${p.id}`} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <div style={{ background: C.border, borderRadius: 6, height: 8, width: 60 }}>
-                  <div style={{ background: pct >= 100 ? C.green : C.orange, width: `${Math.min(pct, 100)}%`, height: 8, borderRadius: 6 }}/>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr", gap: 16 }}>
+        <Card>
+          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Agregar artículo</p>
+          <Inp label="Material" value={f.material} onChange={s("material")} placeholder="Ej. Refrigerador"/>
+          <Inp label="Costo total ($)" type="number" value={f.costo} onChange={s("costo")}/>
+          <Inp label="Meses totales" type="number" value={f.meses_total} onChange={s("meses_total")}/>
+          <Inp label="Cuota mensual ($)" type="number" value={f.cuota} onChange={s("cuota")}/>
+          <Btn onClick={handleAgregar} loading={saving}>Agregar</Btn>
+        </Card>
+        <Card>
+          <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Artículos ({plazos.length})</p>
+          <Tabla
+            headers={["Material", "Costo", "Meses", "Pagados", "Pendientes", "Cuota", "Abonado", "Restante", "Avance", "Acciones"]}
+            rows={plazos.map(p => {
+              if (editId === p.id) {
+                return [
+                  <input key={`m${p.id}`} value={editF.material} onChange={e => setEditF(x => ({ ...x, material: e.target.value }))}
+                    style={{ width: 100, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                  <input key={`c${p.id}`} type="number" value={editF.costo} onChange={e => setEditF(x => ({ ...x, costo: e.target.value }))}
+                    style={{ width: 80, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                  <input key={`mt${p.id}`} type="number" value={editF.meses_total} onChange={e => setEditF(x => ({ ...x, meses_total: e.target.value }))}
+                    style={{ width: 55, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                  <input key={`mp${p.id}`} type="number" value={editF.meses_pagados} onChange={e => setEditF(x => ({ ...x, meses_pagados: e.target.value }))}
+                    style={{ width: 55, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                  "—",
+                  <input key={`cu${p.id}`} type="number" value={editF.cuota} onChange={e => setEditF(x => ({ ...x, cuota: e.target.value }))}
+                    style={{ width: 70, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                  <input key={`ab${p.id}`} type="number" value={editF.abonado} onChange={e => setEditF(x => ({ ...x, abonado: e.target.value }))}
+                    style={{ width: 80, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                  "—", "—",
+                  <Btn key={`g${p.id}`} small color={C.green} onClick={() => guardarEdicion(p.id)}>Guardar</Btn>
+                ];
+              }
+              const pend = p.meses_total - p.meses_pagados;
+              const rest = (p.costo || 0) - (p.abonado || 0);
+              const pct = p.meses_total ? Math.round((p.meses_pagados / p.meses_total) * 100) : 0;
+              return [
+                p.material, fmt(p.costo), p.meses_total, p.meses_pagados, pend,
+                fmt(p.cuota), fmt(p.abonado), fmt(rest),
+                <div key={`bar${p.id}`} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <div style={{ background: C.border, borderRadius: 6, height: 8, width: 60 }}>
+                    <div style={{ background: pct >= 100 ? C.green : C.orange, width: `${Math.min(pct, 100)}%`, height: 8, borderRadius: 6 }}/>
+                  </div>
+                  <span style={{ fontSize: 10 }}>{pct}%</span>
+                </div>,
+                <div key={`acc${p.id}`} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {pend > 0
+                    ? <Btn small color={C.green} onClick={() => handleAbonar(p.id)}>+ Abono</Btn>
+                    : <Badge color={C.green} bg={C.greenLight}>✓ Liquidado</Badge>}
+                  <Btn small onClick={() => empezarEdicion(p)}>Editar</Btn>
+                  <Btn small color={C.red} onClick={() => handleBorrar(p.id)}>Borrar</Btn>
                 </div>
-                <span style={{ fontSize: 10 }}>{pct}%</span>
-              </div>,
-              pend > 0
-                ? <Btn key={`btn${p.id}`} small color={C.green} onClick={() => handleAbonar(p.id)}>+ Abono</Btn>
-                : <Badge key={`ok${p.id}`} color={C.green} bg={C.greenLight}>✓ Liquidado</Badge>
-            ];
-          })}
-        />
-      </Card>
+              ];
+            })}
+          />
+        </Card>
+      </div>
     </div>
   );
 }
-
 // ── MÓDULO: RESUMEN ───────────────────────────────────────────────────────────
 function ModResumen() {
   const { data: prestamos, loading: lp } = useApiData("/api/prestamos");
