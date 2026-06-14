@@ -509,6 +509,52 @@ def abonar_plazo(pid):
     conn.commit()
     conn.close()
     return jsonify(dict(result))
+
+# ─── RUTAS: ALERTAS Y CONFIGURACIÓN ──────────────────────────────────────────
+
+@app.route("/api/configuracion/dias_anticipacion", methods=["GET"])
+def get_dias_anticipacion():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT valor FROM configuracion WHERE clave = 'dias_anticipacion_alerta';")
+    row = cur.fetchone()
+    conn.close()
+    return jsonify({"dias_anticipacion": int(row["valor"]) if row else 2})
+
+@app.route("/api/configuracion/dias_anticipacion", methods=["PATCH"])
+@requiere_rol("administrador")
+def set_dias_anticipacion(data=None):
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE configuracion SET valor = %s WHERE clave = 'dias_anticipacion_alerta';
+    """, (str(int(data["dias_anticipacion"])),))
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Actualizado"})
+
+@app.route("/api/alertas", methods=["GET"])
+def get_alertas():
+    """Préstamos cuyo próximo corte mensual está dentro de los días de anticipación configurados."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT valor FROM configuracion WHERE clave = 'dias_anticipacion_alerta';")
+    row = cur.fetchone()
+    dias = int(row["valor"]) if row else 2
+
+    cur.execute("""
+        SELECT id, deudor_nombre, monto, interes_mensual,
+               fecha_base::text AS fecha_base,
+               proximo_corte::text AS proximo_corte,
+               (proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos
+        WHERE (proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY proximo_corte;
+    """, (dias,))
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
 # ─── RUTA: RESUMEN ────────────────────────────────────────────────────────────
 
 @app.route("/api/resumen", methods=["GET"])
