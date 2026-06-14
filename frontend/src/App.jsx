@@ -9,7 +9,7 @@
 // la reemplazas con la URL real del backend desplegado.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect, useCallback } from "react";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 // ── URL BASE DE LA API ────────────────────────────────────────────────────────
 // En desarrollo local: "http://localhost:5000"
@@ -674,7 +674,7 @@ function ModPagosPlazos() {
   );
 }
 // ── MÓDULO: RESUMEN ───────────────────────────────────────────────────────────
-function ModResumen() {
+function ModResumen({ irA }) {
   const { data: prestamos, loading: lp } = useApiData("/api/prestamos");
   const { data: ahorros, loading: la } = useApiData("/api/ahorros");
   const { data: caja, loading: lc } = useApiData("/api/caja");
@@ -691,17 +691,25 @@ function ModResumen() {
   activos.forEach(p => { porDeudor[p.deudor_nombre] = (porDeudor[p.deudor_nombre] || 0) + parseFloat(p.monto); });
   const topDeudores = Object.entries(porDeudor).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
+  const datosDistribucion = [
+    { name: "Cartera activa", value: totalCartera, color: C.navy },
+    { name: "Ahorros", value: totalAhorros, color: C.green },
+    { name: "Caja", value: totalCaja, color: C.orange },
+  ].filter(d => d.value > 0);
+
+  const datosBarras = topDeudores.map(([nombre, monto]) => ({ nombre, monto }));
+
   return (
     <div>
       <SectionTitle>Resumen ejecutivo — GONZA</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12, marginBottom: 16 }}>
         {[
-          { l: "Cartera activa prestada", v: fmt(totalCartera), c: C.navy, bg: C.navyLight, i: "💼" },
-          { l: "Intereses por cobrar (mensual)", v: fmt(totalIntereses), c: "#8B6914", bg: C.goldLight, i: "📊" },
-          { l: "Total ahorros del grupo", v: fmt(totalAhorros), c: C.green, bg: C.greenLight, i: "🏦" },
-          { l: "Capital caja de ahorro", v: fmt(totalCaja), c: C.orange, bg: C.orangeLight, i: "💰" },
+          { l: "Cartera activa prestada", v: fmt(totalCartera), c: C.navy, bg: C.navyLight, i: "💼", sec: "prestamos" },
+          { l: "Intereses por cobrar (mensual)", v: fmt(totalIntereses), c: "#8B6914", bg: C.goldLight, i: "📊", sec: "prestamos" },
+          { l: "Total ahorros del grupo", v: fmt(totalAhorros), c: C.green, bg: C.greenLight, i: "🏦", sec: "ahorro" },
+          { l: "Capital caja de ahorro", v: fmt(totalCaja), c: C.orange, bg: C.orangeLight, i: "💰", sec: "caja" },
         ].map((s, i) => (
-          <Card key={i} style={{ background: s.bg, display: "flex", alignItems: "center", gap: 12 }}>
+          <Card key={i} onClick={() => irA(s.sec)} style={{ background: s.bg, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", transition: "transform .1s" }}>
             <span style={{ fontSize: 28 }}>{s.i}</span>
             <div>
               <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>{s.l}</p>
@@ -710,8 +718,34 @@ function ModResumen() {
           </Card>
         ))}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <Card>
+          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Distribución del capital del grupo</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie data={datosDistribucion} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                {datosDistribucion.map((d, i) => <Cell key={i} fill={d.color}/>)}
+              </Pie>
+              <Tooltip formatter={(v) => fmt(v)}/>
+            </PieChart>
+          </ResponsiveContainer>
+        </Card>
+        <Card>
+          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Top 5 deudores (monto activo)</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={datosBarras} layout="vertical" margin={{ left: 10 }}>
+              <XAxis type="number" tickFormatter={v => fmt(v)} fontSize={10}/>
+              <YAxis type="category" dataKey="nombre" width={90} fontSize={10}/>
+              <Tooltip formatter={(v) => fmt(v)}/>
+              <Bar dataKey="monto" fill={C.orange} radius={[0, 6, 6, 0]} cursor="pointer" onClick={() => irA("prestamos")}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <Card onClick={() => irA("prestamos")} style={{ cursor: "pointer" }}>
           <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Indicadores generales</p>
           {[
             ["Préstamos activos", activos.length, C.orange],
@@ -725,11 +759,11 @@ function ModResumen() {
           ))}
         </Card>
         <Card>
-          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Top 5 deudores (monto activo)</p>
+          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Ranking de deudores</p>
           {topDeudores.map(([nombre, monto], i) => {
             const maxM = topDeudores[0][1] || 1;
             return (
-              <div key={nombre} style={{ marginBottom: 10 }}>
+              <div key={nombre} style={{ marginBottom: 10, cursor: "pointer" }} onClick={() => irA("prestamos")}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
                   <span style={{ color: C.oxford }}>{i + 1}. {nombre}</span>
                   <span style={{ fontWeight: 700, color: C.navy }}>{fmt(monto)}</span>
@@ -745,7 +779,6 @@ function ModResumen() {
     </div>
   );
 }
-
 // ── MÓDULO: USUARIOS ──────────────────────────────────────────────────────────
 function ModUsuarios() {
   const { data: usuarios, loading, reload } = useApiData("/api/usuarios");
@@ -977,7 +1010,7 @@ export default function App() {
       </nav>
       <div style={{ minHeight: "calc(100vh - 100px)" }}>
         <main style={{ padding: "20px 22px", overflowY: "auto" }}>
-          {sec === "resumen" && <ModResumen/>}
+          {sec === "resumen" && <ModResumen irA={setSec}/>}
           {sec === "clientes" && <ModClientes/>}
           {sec === "prestamos" && <ModPrestamos/>}
           {sec === "ahorro" && <ModAhorro/>}
