@@ -324,7 +324,50 @@ def get_caja():
     conn.close()
     return jsonify(list(rows))
 
-# ─── RUTAS: PAGOS A PLAZOS ────────────────────────────────────────────────────
+@app.route("/api/caja", methods=["POST"])
+@requiere_rol("administrador", "analista")
+def add_caja():
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO caja (participante, cuota, capital, fecha_inicio)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id;
+    """, (
+        data["participante"],
+        data.get("cuota", 0),
+        data.get("capital", 0),
+        data.get("fecha_inicio", ""),
+    ))
+    nuevo_id = cur.fetchone()["id"]
+    conn.commit()
+    conn.close()
+    return jsonify({"id": nuevo_id}), 201
+
+@app.route("/api/caja/<int:cid>", methods=["PATCH"])
+@requiere_rol("administrador", "analista")
+def update_caja(cid):
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE caja SET participante = %s, cuota = %s, capital = %s, fecha_inicio = %s
+        WHERE id = %s;
+    """, (data["participante"], data["cuota"], data["capital"], data.get("fecha_inicio", ""), cid))
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Actualizado"})
+
+@app.route("/api/caja/<int:cid>", methods=["DELETE"])
+@requiere_rol("administrador", "analista")
+def delete_caja(cid):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM caja WHERE id = %s;", (cid,))
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Eliminado"})# ─── RUTAS: PAGOS A PLAZOS ────────────────────────────────────────────────────
 
 @app.route("/api/plazos", methods=["GET"])
 def get_plazos():
