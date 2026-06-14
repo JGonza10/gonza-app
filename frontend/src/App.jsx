@@ -816,7 +816,7 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh" }}>
-      <div style={{ background: C.navy, padding: "0 20px", display: "flex", alignItems: "center", gap: 14, height: 56, boxShadow: "0 2px 6px rgba(0,0,0,.3)" }}>
+     <div style={{ background: C.navy, padding: "0 20px", display: "flex", alignItems: "center", gap: 14, height: 56, boxShadow: "0 2px 6px rgba(0,0,0,.3)" }}>
         <Logo size={36}/>
         <div>
           <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: 1.5, color: C.gold }}>GONZA</div>
@@ -832,25 +832,25 @@ export default function App() {
           {new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </div>
       </div>
-      <div style={{ display: "flex", minHeight: "calc(100vh - 56px)" }}>
-       <nav style={{ width: 185, background: C.oxford, padding: "12px 0", flexShrink: 0 }}>
-          {MENU.filter(m => !m.soloAdmin || user.rol === "administrador").map(m => {
-            const active = sec === m.id;
-            return (
-              <button key={m.id} onClick={() => setSec(m.id)} style={{
-                display: "flex", alignItems: "center", gap: 9, width: "100%", padding: "10px 16px",
-                background: active ? C.navy : "transparent", border: "none",
-                borderLeft: active ? `3px solid ${C.gold}` : "3px solid transparent",
-                color: active ? C.gold : "#b0bcd4", fontSize: 13, fontWeight: active ? 700 : 400,
-                cursor: "pointer", textAlign: "left",
-              }}>
-                <span style={{ fontSize: 15 }}>{m.icon}</span>
-                {m.label}
-              </button>
-            );
-          })}
-        </nav>
-        <main style={{ flex: 1, padding: "20px 22px", overflowY: "auto" }}>
+      <nav style={{ background: C.oxford, display: "flex", flexWrap: "wrap", boxShadow: "0 2px 4px rgba(0,0,0,.2)" }}>
+        {MENU.filter(m => !m.soloAdmin || user.rol === "administrador").map(m => {
+          const active = sec === m.id;
+          return (
+            <button key={m.id} onClick={() => setSec(m.id)} style={{
+              display: "flex", alignItems: "center", gap: 7, padding: "11px 18px",
+              background: active ? C.navy : "transparent", border: "none",
+              borderBottom: active ? `3px solid ${C.gold}` : "3px solid transparent",
+              color: active ? C.gold : "#b0bcd4", fontSize: 13, fontWeight: active ? 700 : 400,
+              cursor: "pointer",
+            }}>
+              <span style={{ fontSize: 15 }}>{m.icon}</span>
+              {m.label}
+            </button>
+          );
+        })}
+      </nav>
+      <div style={{ minHeight: "calc(100vh - 100px)" }}>
+        <main style={{ padding: "20px 22px", overflowY: "auto" }}>
           {sec === "resumen" && <ModResumen/>}
           {sec === "clientes" && <ModClientes/>}
           {sec === "prestamos" && <ModPrestamos/>}
