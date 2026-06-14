@@ -8,7 +8,7 @@ import psycopg2
 import psycopg2.extras
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
@@ -90,6 +90,76 @@ def requiere_rol(*roles_permitidos):
         return envoltura
     return decorador
 
+# ─── RUTAS: USUARIOS ──────────────────────────────────────────────────────────
+
+@app.route("/api/usuarios", methods=["GET"])
+@requiere_rol("administrador")
+def get_usuarios():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT u.id, u.username, u.nombre, u.activo, r.nombre AS rol, u.rol_id
+        FROM usuarios u JOIN roles r ON u.rol_id = r.id
+        ORDER BY u.id;
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
+
+@app.route("/api/usuarios", methods=["POST"])
+@requiere_rol("administrador")
+def add_usuario():
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO usuarios (username, password_hash, nombre, rol_id)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id;
+        """, (
+            data["username"],
+            generate_password_hash(data["password"], method="pbkdf2:sha256"),
+            data["nombre"],
+            data["rol_id"],
+        ))
+        nuevo_id = cur.fetchone()["id"]
+        conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        conn.close()
+        return jsonify({"error": "Ese nombre de usuario ya existe"}), 400
+    conn.close()
+    return jsonify({"id": nuevo_id}), 201
+
+@app.route("/api/usuarios/<int:uid>", methods=["PATCH"])
+@requiere_rol("administrador")
+def update_usuario(uid):
+    """Activa/desactiva un usuario, cambia su rol o resetea su contraseña."""
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+
+    if "activo" in data:
+        cur.execute("UPDATE usuarios SET activo = %s WHERE id = %s;", (data["activo"], uid))
+    if "rol_id" in data:
+        cur.execute("UPDATE usuarios SET rol_id = %s WHERE id = %s;", (data["rol_id"], uid))
+    if "password" in data and data["password"]:
+        cur.execute("UPDATE usuarios SET password_hash = %s WHERE id = %s;",
+                     (generate_password_hash(data["password"], method="pbkdf2:sha256"), uid))
+
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Usuario actualizado"})
+
+@app.route("/api/roles", methods=["GET"])
+def get_roles():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, nombre FROM roles ORDER BY id;")
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
 # ─── RUTAS: PRÉSTAMOS ────────────────────────────────────────────────────────
 
 @app.route("/api/prestamos", methods=["GET"])

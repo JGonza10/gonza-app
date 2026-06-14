@@ -436,6 +436,70 @@ function ModResumen() {
   );
 }
 
+// ── MÓDULO: USUARIOS ──────────────────────────────────────────────────────────
+function ModUsuarios() {
+  const { data: usuarios, loading, reload } = useApiData("/api/usuarios");
+  const { data: roles } = useApiData("/api/roles");
+  const [f, setF] = useState({ username: "", nombre: "", password: "", rol_id: "" });
+  const [saving, setSaving] = useState(false);
+  const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
+
+  async function handleAgregar() {
+    if (!f.username || !f.nombre || !f.password || !f.rol_id) return alert("Todos los campos son requeridos");
+    setSaving(true);
+    try {
+      await api("/api/usuarios", {
+        method: "POST",
+        body: JSON.stringify({ ...f, rol_id: parseInt(f.rol_id) }),
+      });
+      setF({ username: "", nombre: "", password: "", rol_id: "" });
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function handleToggleActivo(uid, activo) {
+    try {
+      await api(`/api/usuarios/${uid}`, { method: "PATCH", body: JSON.stringify({ activo: !activo }) });
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+  }
+
+  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando usuarios...</p>;
+
+  return (
+    <div>
+      <SectionTitle>Gestión de usuarios</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 16 }}>
+        <Card>
+          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Nuevo usuario</p>
+          <Inp label="Nombre completo" value={f.nombre} onChange={s("nombre")} placeholder="Ej. Juan Pérez"/>
+          <Inp label="Usuario (para login)" value={f.username} onChange={s("username")} placeholder="jperez"/>
+          <Inp label="Contraseña" type="password" value={f.password} onChange={s("password")} placeholder="••••••••"/>
+          <Sel label="Rol" value={f.rol_id} onChange={s("rol_id")}>
+            <option value="">Selecciona un rol</option>
+            {roles.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+          </Sel>
+          <Btn onClick={handleAgregar} loading={saving}>Crear usuario</Btn>
+        </Card>
+        <Card>
+          <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Usuarios del sistema ({usuarios.length})</p>
+          <Tabla
+            headers={["ID", "Nombre", "Usuario", "Rol", "Estado", "Acción"]}
+            rows={usuarios.map(u => [
+              u.id, u.nombre, u.username, <Badge key={`r${u.id}`}>{u.rol}</Badge>,
+              <Badge key={`e${u.id}`} color={u.activo ? C.green : C.red} bg={u.activo ? C.greenLight : C.redLight}>{u.activo ? "Activo" : "Inactivo"}</Badge>,
+              <Btn key={`b${u.id}`} small color={u.activo ? C.red : C.green} onClick={() => handleToggleActivo(u.id, u.activo)}>
+                {u.activo ? "Desactivar" : "Activar"}
+              </Btn>
+            ])}
+          />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 // ── LOGIN ──────────────────────────────────────────────────────────────────
 function Login({ onLogin }) {
   const [username, setUsername] = useState("");
@@ -492,8 +556,8 @@ const MENU = [
   { id: "ahorro", label: "Ahorro", icon: "🏦" },
   { id: "caja", label: "Caja", icon: "💰" },
   { id: "plazos", label: "Pagos a plazos", icon: "📅" },
+  { id: "usuarios", label: "Usuarios", icon: "🔐", soloAdmin: true },
 ];
-
 export default function App() {
   const [sec, setSec] = useState("resumen");
   const [user, setUser] = useState(() => {
@@ -532,8 +596,8 @@ export default function App() {
         </div>
       </div>
       <div style={{ display: "flex", minHeight: "calc(100vh - 56px)" }}>
-        <nav style={{ width: 185, background: C.oxford, padding: "12px 0", flexShrink: 0 }}>
-          {MENU.map(m => {
+       <nav style={{ width: 185, background: C.oxford, padding: "12px 0", flexShrink: 0 }}>
+          {MENU.filter(m => !m.soloAdmin || user.rol === "administrador").map(m => {
             const active = sec === m.id;
             return (
               <button key={m.id} onClick={() => setSec(m.id)} style={{
@@ -556,6 +620,7 @@ export default function App() {
           {sec === "ahorro" && <ModAhorro/>}
           {sec === "caja" && <ModCaja/>}
           {sec === "plazos" && <ModPagosPlazos/>}
+          {sec === "usuarios" && <ModUsuarios/>}
         </main>
       </div>
     </div>
