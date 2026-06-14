@@ -133,10 +133,68 @@ function useApiData(endpoint) {
 }
 
 // ── MÓDULO: PRÉSTAMOS ─────────────────────────────────────────────────────────
+function ModalAbono({ prestamo, onClose, onSaved }) {
+  const [montoInteres, setMontoInteres] = useState("");
+  const [montoCapital, setMontoCapital] = useState("");
+  const [fechaPago, setFechaPago] = useState(today);
+  const [nota, setNota] = useState("");
+  const [saving, setSaving] = useState(false);
+  const { data: historial, loading: loadingHist } = useApiData(`/api/prestamos/${prestamo.id}/historial`);
+
+  const saldoRestante = parseFloat(prestamo.monto || 0) - parseFloat(prestamo.capital_abonado || 0);
+
+  async function handleGuardar() {
+    const mi = parseFloat(montoInteres || 0);
+    const mc = parseFloat(montoCapital || 0);
+    if (mi <= 0 && mc <= 0) return alert("Ingresa al menos un monto mayor a 0");
+    setSaving(true);
+    try {
+      await api(`/api/prestamos/${prestamo.id}/abono`, {
+        method: "POST",
+        body: JSON.stringify({ monto_interes: mi, monto_capital: mc, fecha_pago: fechaPago, nota }),
+      });
+      onSaved();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <Card style={{ width: 420, maxHeight: "85vh", overflowY: "auto" }}>
+        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: C.navy }}>Abono — {prestamo.deudor_nombre}</p>
+        <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
+          Monto del préstamo: <b>{fmt(prestamo.monto)}</b> · Capital abonado: <b>{fmt(prestamo.capital_abonado || 0)}</b> · Saldo restante: <b style={{ color: C.orange }}>{fmt(saldoRestante)}</b>
+        </p>
+
+        <Inp label="Fecha del abono" type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}/>
+        <Inp label="Abono al interés ($)" type="number" value={montoInteres} onChange={e => setMontoInteres(e.target.value)}/>
+        <Inp label="Abono al capital ($)" type="number" value={montoCapital} onChange={e => setMontoCapital(e.target.value)}/>
+        <Inp label="Nota (opcional)" value={nota} onChange={e => setNota(e.target.value)} placeholder="Observaciones"/>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <Btn color={C.orange} onClick={handleGuardar} loading={saving}>Registrar abono</Btn>
+          <Btn color={C.oxford} onClick={onClose}>Cerrar</Btn>
+        </div>
+
+        <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Historial de abonos</p>
+        {loadingHist
+          ? <p style={{ fontSize: 12, color: C.oxford }}>Cargando...</p>
+          : <Tabla
+              headers={["Fecha", "Interés", "Capital", "Nota"]}
+              rows={historial.map(h => [h.fecha_pago, fmt(h.monto_interes), fmt(h.monto_capital), h.nota || "—"])}
+              empty="Sin abonos registrados"
+            />
+        }
+      </Card>
+    </div>
+  );
+}
+
 function ModPrestamos() {
   const { data: prestamos, loading, reload } = useApiData("/api/prestamos");
   const [f, setF] = useState({ deudor_nombre: "", fecha_prestamo: today, monto: "", nota: "" });
   const [saving, setSaving] = useState(false);
+  const [abonoPrestamo, setAbonoPrestamo] = useState(null);
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
@@ -200,12 +258,20 @@ function ModPrestamos() {
         <Card>
           <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Préstamos activos ({activos.length})</p>
           <Tabla
-            headers={["#", "Deudor", "Fecha", "Monto", "Interés (10%)", "Nota", "Acción"]}
-            rows={activos.map(p => [
-              p.id, p.deudor_nombre, p.fecha_prestamo,
-              fmt(p.monto), fmt(p.interes_mensual), p.nota || "—",
-              <Btn key={p.id} small color={C.green} onClick={() => handlePagar(p.id)}>✓ Pagado</Btn>
-            ])}
+            headers={["#", "Deudor", "Fecha", "Monto", "Interés (10%)", "Capital abonado", "Saldo restante", "Nota", "Acciones"]}
+            rows={activos.map(p => {
+              const saldo = parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0);
+              return [
+                p.id, p.deudor_nombre, p.fecha_prestamo,
+                fmt(p.monto), fmt(p.interes_mensual), fmt(p.capital_abonado || 0),
+                <b key={`s${p.id}`} style={{ color: saldo <= 0 ? C.green : C.orange }}>{fmt(saldo)}</b>,
+                p.nota || "—",
+                <div key={`acc${p.id}`} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  <Btn small color={C.orange} onClick={() => setAbonoPrestamo(p)}>Abonar</Btn>
+                  <Btn small color={C.green} onClick={() => handlePagar(p.id)}>✓ Liquidar</Btn>
+                </div>
+              ];
+            })}
           />
         </Card>
       </div>
@@ -216,10 +282,17 @@ function ModPrestamos() {
           rows={pagados.map(p => [p.id, p.deudor_nombre, p.fecha_prestamo, fmt(p.monto), p.fecha_pago || "—", p.nota || "—"])}
         />
       </Card>}
+
+      {abonoPrestamo && (
+        <ModalAbono
+          prestamo={abonoPrestamo}
+          onClose={() => setAbonoPrestamo(null)}
+          onSaved={() => { setAbonoPrestamo(null); reload(); }}
+        />
+      )}
     </div>
   );
 }
-
 // ── MÓDULO: CLIENTES ──────────────────────────────────────────────────────────
 function ModClientes() {
   const { data: clientes, loading, reload } = useApiData("/api/clientes");

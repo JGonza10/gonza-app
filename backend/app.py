@@ -199,8 +199,7 @@ def add_prestamo():
 @app.route("/api/prestamos/<int:pid>/pagar", methods=["PATCH"])
 @requiere_rol("administrador", "analista")
 def marcar_pagado(pid):
-
-    """Marca un préstamo como pagado."""
+    """Marca un préstamo como pagado (liquidación total)."""
     data = request.get_json()
     conn = get_db()
     cur = conn.cursor()
@@ -208,12 +207,75 @@ def marcar_pagado(pid):
         UPDATE prestamos
         SET pagado = TRUE,
             fecha_pago = %s,
+            capital_abonado = monto,
             tipo_pago_id = (SELECT id FROM tipos_pago WHERE nombre = %s)
         WHERE id = %s;
     """, (data["fecha_pago"], data.get("tipo_pago", "transferencia"), pid))
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Marcado como pagado"})
+
+@app.route("/api/prestamos/<int:pid>/abono", methods=["POST"])
+@requiere_rol("administrador", "analista")
+def registrar_abono(pid):
+    """Registra un abono parcial (interés y/o capital) a un préstamo."""
+    data = request.get_json()
+    monto_interes = float(data.get("monto_interes", 0))
+    monto_capital = float(data.get("monto_capital", 0))
+    fecha_pago = data["fecha_pago"]
+    tipo_pago = data.get("tipo_pago", "transferencia")
+    nota = data.get("nota", "")
+
+    if monto_interes <= 0 and monto_capital <= 0:
+        return jsonify({"error": "Debes registrar al menos un monto mayor a 0"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # 1. Guardar el abono en el historial
+    cur.execute("""
+        INSERT INTO pagos_prestamo (prestamo_id, fecha_pago, monto_interes, monto_capital, tipo_pago_id, nota)
+        VALUES (%s, %s, %s, %s, (SELECT id FROM tipos_pago WHERE nombre = %s), %s)
+        RETURNING id;
+    """, (pid, fecha_pago, monto_interes, monto_capital, tipo_pago, nota))
+    nuevo_id = cur.fetchone()["id"]
+
+    # 2. Actualizar el capital abonado del préstamo
+    cur.execute("""
+        UPDATE prestamos SET capital_abonado = capital_abonado + %s
+        WHERE id = %s
+        RETURNING monto, capital_abonado;
+    """, (monto_capital, pid))
+    row = cur.fetchone()
+
+    # 3. Si el capital abonado ya cubre el monto total, marcar como pagado
+    if row["capital_abonado"] >= row["monto"] and row["monto"] > 0:
+        cur.execute("""
+            UPDATE prestamos
+            SET pagado = TRUE, fecha_pago = %s,
+                tipo_pago_id = (SELECT id FROM tipos_pago WHERE nombre = %s)
+            WHERE id = %s;
+        """, (fecha_pago, tipo_pago, pid))
+
+    conn.commit()
+    conn.close()
+    return jsonify({"id": nuevo_id, "mensaje": "Abono registrado"}), 201
+
+@app.route("/api/prestamos/<int:pid>/historial", methods=["GET"])
+def get_historial_prestamo(pid):
+    """Devuelve el historial de abonos de un préstamo."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT pp.id, pp.fecha_pago, pp.monto_interes, pp.monto_capital, pp.nota, tp.nombre AS tipo_pago
+        FROM pagos_prestamo pp
+        LEFT JOIN tipos_pago tp ON pp.tipo_pago_id = tp.id
+        WHERE pp.prestamo_id = %s
+        ORDER BY pp.fecha_pago DESC, pp.id DESC;
+    """, (pid,))
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
 
 # ─── RUTAS: CLIENTES ──────────────────────────────────────────────────────────
 
