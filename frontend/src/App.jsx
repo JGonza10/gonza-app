@@ -810,6 +810,58 @@ function ModUsuarios() {
   );
 }
 
+// ── ALERTAS ────────────────────────────────────────────────────────────────
+function AlertasBell() {
+  const { data: alertas, loading } = useApiData("/api/alertas");
+  const [open, setOpen] = useState(false);
+
+  if (loading) return null;
+
+  return (
+    <div style={{ position: "relative", marginLeft: 14 }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        background: "transparent", border: "none", cursor: "pointer",
+        fontSize: 20, position: "relative", padding: 4,
+      }}>
+        🔔
+        {alertas.length > 0 && (
+          <span style={{
+            position: "absolute", top: -2, right: -2, background: C.red, color: C.white,
+            fontSize: 10, fontWeight: 700, borderRadius: "50%", width: 16, height: 16,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>{alertas.length}</span>
+        )}
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: 36, right: 0, background: C.white, border: `1px solid ${C.border}`,
+          borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,.2)", width: 300, zIndex: 1000, padding: 12,
+        }}>
+          <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.navy }}>
+            Réditos próximos a vencer
+          </p>
+          {alertas.length === 0
+            ? <p style={{ fontSize: 12, color: C.oxford }}>Sin alertas pendientes.</p>
+            : alertas.map(a => (
+                <div key={a.id} style={{ borderBottom: `1px solid ${C.border}`, padding: "6px 0", fontSize: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontWeight: 700, color: C.navy }}>{a.deudor_nombre}</span>
+                    <Badge color={a.dias_para_corte === 0 ? C.red : C.orange} bg={a.dias_para_corte === 0 ? C.redLight : C.orangeLight}>
+                      {a.dias_para_corte === 0 ? "Hoy" : `En ${a.dias_para_corte} día(s)`}
+                    </Badge>
+                  </div>
+                  <div style={{ color: C.oxford, marginTop: 2 }}>
+                    Interés: {fmt(a.interes_mensual)} · Corte: {a.proximo_corte}
+                  </div>
+                </div>
+              ))
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── LOGIN ──────────────────────────────────────────────────────────────────
 function Login({ onLogin }) {
   const [username, setUsername] = useState("");
@@ -900,6 +952,7 @@ export default function App() {
           <div style={{ fontSize: 12, color: C.white, fontWeight: 700 }}>{user.nombre}</div>
           <div style={{ fontSize: 10, color: C.gold, textTransform: "uppercase" }}>{user.rol}</div>
         </div>
+        <AlertasBell/>
         <Btn small color={C.orange} onClick={handleLogout}>Salir</Btn>
         <div style={{ fontSize: 11, color: "#8fa8c8", marginLeft: 14 }}>
           {new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
