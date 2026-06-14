@@ -9,6 +9,9 @@ import psycopg2.extras
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
@@ -555,6 +558,96 @@ def get_alertas():
     rows = cur.fetchall()
     conn.close()
     return jsonify(list(rows))
+# ─── ENVÍO DE CORREOS DE ALERTA ───────────────────────────────────────────────
+
+def enviar_correo(destinatario, asunto, cuerpo_html):
+    """Envía un correo usando SMTP (Outlook)."""
+    remitente = os.environ.get("SMTP_EMAIL")
+    password = os.environ.get("SMTP_PASSWORD")
+    servidor = os.environ.get("SMTP_SERVER", "smtp.office365.com")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = asunto
+    msg["From"] = remitente
+    msg["To"] = destinatario
+    msg.attach(MIMEText(cuerpo_html, "html"))
+
+    with smtplib.SMTP(servidor, 587) as server:
+        server.starttls()
+        server.login(remitente, password)
+        server.sendmail(remitente, destinatario, msg.as_string())
+
+
+@app.route("/api/alertas/enviar-correos", methods=["POST"])
+def enviar_correos_alertas():
+    """Envía un correo a cada usuario (admin/analista) con las alertas pendientes.
+       Pensado para ser llamado por un cron job diario."""
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Días de anticipación configurados
+    cur.execute("SELECT valor FROM configuracion WHERE clave = 'dias_anticipacion_alerta';")
+    row = cur.fetchone()
+    dias = int(row["valor"]) if row else 2
+
+    # Alertas activas
+    cur.execute("""
+        SELECT deudor_nombre, monto, interes_mensual,
+               proximo_corte::text AS proximo_corte,
+               (proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos
+        WHERE (proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY proximo_corte;
+    """, (dias,))
+    alertas = cur.fetchall()
+
+    if not alertas:
+        conn.close()
+        return jsonify({"mensaje": "Sin alertas pendientes, no se enviaron correos"})
+
+    # Destinatarios: administradores y analistas con correo registrado
+    cur.execute("""
+        SELECT u.correo, u.nombre FROM usuarios u
+        JOIN roles r ON u.rol_id = r.id
+        WHERE r.nombre IN ('administrador', 'analista') AND u.activo = TRUE AND u.correo IS NOT NULL AND u.correo != '';
+    """)
+    destinatarios = cur.fetchall()
+    conn.close()
+
+    if not destinatarios:
+        return jsonify({"mensaje": "Sin destinatarios con correo configurado"}), 200
+
+    # Construir el cuerpo del correo
+    filas = "".join([
+        f"<tr><td style='padding:6px 10px;border:1px solid #ddd'>{a['deudor_nombre']}</td>"
+        f"<td style='padding:6px 10px;border:1px solid #ddd'>${a['interes_mensual']}</td>"
+        f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['proximo_corte']}</td>"
+        f"<td style='padding:6px 10px;border:1px solid #ddd'>{'Hoy' if a['dias_para_corte']==0 else f\"En {a['dias_para_corte']} día(s)\"}</td></tr>"
+        for a in alertas
+    ])
+    cuerpo = f"""
+    <h3>Sistema GONZA — Réditos próximos a vencer</h3>
+    <table style="border-collapse:collapse;font-family:sans-serif;font-size:13px">
+        <tr style="background:#0B1F4B;color:#C9A84C">
+            <th style='padding:6px 10px;border:1px solid #ddd'>Deudor</th>
+            <th style='padding:6px 10px;border:1px solid #ddd'>Interés</th>
+            <th style='padding:6px 10px;border:1px solid #ddd'>Corte</th>
+            <th style='padding:6px 10px;border:1px solid #ddd'>Vence</th>
+        </tr>
+        {filas}
+    </table>
+    """
+
+    enviados = 0
+    errores = []
+    for d in destinatarios:
+        try:
+            enviar_correo(d["correo"], "GONZA — Alertas de réditos próximos a vencer", cuerpo)
+            enviados += 1
+        except Exception as e:
+            errores.append(f"{d['correo']}: {str(e)}")
+
+    return jsonify({"enviados": enviados, "errores": errores, "alertas": len(alertas)})
 # ─── RUTA: RESUMEN ────────────────────────────────────────────────────────────
 
 @app.route("/api/resumen", methods=["GET"])
