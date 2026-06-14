@@ -176,17 +176,27 @@ def get_prestamos():
 @app.route("/api/prestamos", methods=["POST"])
 @requiere_rol("administrador", "analista")
 def add_prestamo():
-
-    """Registra un nuevo préstamo."""
+    """Registra un nuevo préstamo. El deudor debe ser un cliente del catálogo."""
     data = request.get_json()
     conn = get_db()
     cur = conn.cursor()
+
+    # Obtener el nombre completo del cliente seleccionado
+    cur.execute("SELECT nombre, apellido_pat, apellido_mat FROM clientes WHERE id = %s;", (data["cliente_id"],))
+    cliente = cur.fetchone()
+    if not cliente:
+        conn.close()
+        return jsonify({"error": "Cliente no encontrado"}), 400
+
+    deudor_nombre = f"{cliente['nombre']} {cliente['apellido_pat']} {cliente['apellido_mat'] or ''}".strip()
+
     cur.execute("""
-        INSERT INTO prestamos (deudor_nombre, fecha_prestamo, monto, interes_mensual, nota)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO prestamos (deudor_nombre, cliente_id, fecha_prestamo, monto, interes_mensual, nota)
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING id;
     """, (
-        data["deudor_nombre"],
+        deudor_nombre,
+        data["cliente_id"],
         data["fecha_prestamo"],
         data["monto"],
         data["interes_mensual"],
@@ -196,7 +206,6 @@ def add_prestamo():
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id, "mensaje": "Préstamo registrado"}), 201
-
 @app.route("/api/prestamos/<int:pid>/pagar", methods=["PATCH"])
 @requiere_rol("administrador", "analista")
 def marcar_pagado(pid):
@@ -390,15 +399,26 @@ def get_caja():
 @app.route("/api/caja", methods=["POST"])
 @requiere_rol("administrador", "analista")
 def add_caja():
+    """Agrega un participante a la caja. El participante debe ser un cliente del catálogo."""
     data = request.get_json()
     conn = get_db()
     cur = conn.cursor()
+
+    cur.execute("SELECT nombre, apellido_pat, apellido_mat FROM clientes WHERE id = %s;", (data["cliente_id"],))
+    cliente = cur.fetchone()
+    if not cliente:
+        conn.close()
+        return jsonify({"error": "Cliente no encontrado"}), 400
+
+    participante = f"{cliente['nombre']} {cliente['apellido_pat']} {cliente['apellido_mat'] or ''}".strip()
+
     cur.execute("""
-        INSERT INTO caja (participante, cuota, capital, fecha_inicio)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO caja (participante, cliente_id, cuota, capital, fecha_inicio)
+        VALUES (%s, %s, %s, %s, %s)
         RETURNING id;
     """, (
-        data["participante"],
+        participante,
+        data["cliente_id"],
         data.get("cuota", 0),
         data.get("capital", 0),
         data.get("fecha_inicio", ""),
@@ -407,7 +427,6 @@ def add_caja():
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id}), 201
-
 @app.route("/api/caja/<int:cid>", methods=["PATCH"])
 @requiere_rol("administrador", "analista")
 def update_caja(cid):

@@ -193,7 +193,8 @@ function ModalAbono({ prestamo, onClose, onSaved }) {
 
 function ModPrestamos() {
   const { data: prestamos, loading, reload } = useApiData("/api/prestamos");
-  const [f, setF] = useState({ deudor_nombre: "", fecha_prestamo: today, monto: "", nota: "" });
+  const { data: clientes } = useApiData("/api/clientes");
+  const [f, setF] = useState({ cliente_id: "", fecha_prestamo: today, monto: "", nota: "" });
   const [saving, setSaving] = useState(false);
   const [abonoPrestamo, setAbonoPrestamo] = useState(null);
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
@@ -204,18 +205,20 @@ function ModPrestamos() {
   const totalIntereses = activos.reduce((a, p) => a + parseFloat(p.interes_mensual || 0), 0);
 
   async function handleAgregar() {
-    if (!f.deudor_nombre || !f.monto) return alert("Nombre y monto requeridos");
+    if (!f.cliente_id || !f.monto) return alert("Cliente y monto requeridos");
     setSaving(true);
     try {
       await api("/api/prestamos", {
         method: "POST",
         body: JSON.stringify({
-          ...f,
+          cliente_id: parseInt(f.cliente_id),
+          fecha_prestamo: f.fecha_prestamo,
+          nota: f.nota,
           monto: parseFloat(f.monto),
           interes_mensual: parseFloat(f.monto) * 0.10,
         }),
       });
-      setF({ deudor_nombre: "", fecha_prestamo: today, monto: "", nota: "" });
+      setF({ cliente_id: "", fecha_prestamo: today, monto: "", nota: "" });
       reload();
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
@@ -244,38 +247,46 @@ function ModPrestamos() {
           { l: "Préstamos pagados", v: pagados.length, c: C.green, bg: C.greenLight },
         ].map((s2, i) => <Card key={i} style={{ background: s2.bg }}><p style={{ margin: 0, fontSize: 11, color: C.oxford }}>{s2.l}</p><p style={{ margin: "2px 0 0", fontSize: 20, fontWeight: 700, color: s2.c }}>{s2.v}</p></Card>)}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16, marginBottom: 16 }}>
-        <Card>
-          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Registrar préstamo</p>
-          <Inp label="Nombre del deudor" value={f.deudor_nombre} onChange={s("deudor_nombre")} placeholder="Nombre completo"/>
+
+      <Card style={{ marginBottom: 16 }}>
+        <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Registrar préstamo</p>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 2fr auto", gap: 10, alignItems: "end" }}>
+          <Sel label="Cliente" value={f.cliente_id} onChange={s("cliente_id")}>
+            <option value="">Selecciona un cliente</option>
+            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat} {c.apellido_mat || ""}</option>)}
+          </Sel>
           <Inp label="Fecha del préstamo" type="date" value={f.fecha_prestamo} onChange={s("fecha_prestamo")}/>
           <Inp label="Monto prestado ($)" type="number" value={f.monto} onChange={s("monto")}/>
-          {f.monto && <div style={{ background: C.goldLight, borderRadius: 8, padding: "7px 10px", fontSize: 12, marginBottom: 8 }}>
-            Interés (10%): <b>{fmt(parseFloat(f.monto) * 0.10)}</b>
-          </div>}
           <Inp label="Notas" value={f.nota} onChange={s("nota")} placeholder="Observaciones"/>
-          <Btn color={C.orange} onClick={handleAgregar} loading={saving}>Registrar préstamo</Btn>
-        </Card>
-        <Card>
-          <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Préstamos activos ({activos.length})</p>
-          <Tabla
-            headers={["#", "Deudor", "Fecha", "Monto", "Interés (10%)", "Capital abonado", "Saldo restante", "Nota", "Acciones"]}
-            rows={activos.map(p => {
-              const saldo = parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0);
-              return [
-                p.id, p.deudor_nombre, p.fecha_prestamo,
-                fmt(p.monto), fmt(p.interes_mensual), fmt(p.capital_abonado || 0),
-                <b key={`s${p.id}`} style={{ color: saldo <= 0 ? C.green : C.orange }}>{fmt(saldo)}</b>,
-                p.nota || "—",
-                <div key={`acc${p.id}`} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  <Btn small color={C.orange} onClick={() => setAbonoPrestamo(p)}>Abonar</Btn>
-                  <Btn small color={C.green} onClick={() => handlePagar(p.id)}>✓ Liquidar</Btn>
-                </div>
-              ];
-            })}
-          />
-        </Card>
-      </div>
+          <div style={{ marginBottom: 9 }}>
+            <Btn color={C.orange} onClick={handleAgregar} loading={saving}>Registrar</Btn>
+          </div>
+        </div>
+        {f.monto && <div style={{ background: C.goldLight, borderRadius: 8, padding: "7px 10px", fontSize: 12, marginTop: -4 }}>
+          Interés (10%): <b>{fmt(parseFloat(f.monto) * 0.10)}</b>
+        </div>}
+      </Card>
+
+      <Card style={{ marginBottom: 16 }}>
+        <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Préstamos activos ({activos.length})</p>
+        <Tabla
+          headers={["#", "Deudor", "Fecha", "Monto", "Interés (10%)", "Capital abonado", "Saldo restante", "Nota", "Acciones"]}
+          rows={activos.map(p => {
+            const saldo = parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0);
+            return [
+              p.id, p.deudor_nombre, p.fecha_prestamo,
+              fmt(p.monto), fmt(p.interes_mensual), fmt(p.capital_abonado || 0),
+              <b key={`s${p.id}`} style={{ color: saldo <= 0 ? C.green : C.orange }}>{fmt(saldo)}</b>,
+              p.nota || "—",
+              <div key={`acc${p.id}`} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <Btn small color={C.orange} onClick={() => setAbonoPrestamo(p)}>Abonar</Btn>
+                <Btn small color={C.green} onClick={() => handlePagar(p.id)}>✓ Liquidar</Btn>
+              </div>
+            ];
+          })}
+        />
+      </Card>
+
       {pagados.length > 0 && <Card>
         <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Pagados ({pagados.length})</p>
         <Tabla
@@ -294,6 +305,7 @@ function ModPrestamos() {
     </div>
   );
 }
+
 // ── MÓDULO: CLIENTES ──────────────────────────────────────────────────────────
 function ModClientes() {
   const { data: clientes, loading, reload } = useApiData("/api/clientes");
