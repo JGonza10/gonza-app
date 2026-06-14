@@ -428,6 +428,54 @@ function ModResumen() {
   );
 }
 
+// ── LOGIN ──────────────────────────────────────────────────────────────────
+function Login({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Error al iniciar sesión");
+        return;
+      }
+      onLogin(data);
+    } catch (e2) {
+      setError("No se pudo conectar con el servidor");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Card style={{ width: 320 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 16 }}>
+          <Logo size={48}/>
+          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 1.5, color: C.gold, marginTop: 8 }}>GONZA</div>
+          <div style={{ fontSize: 10, color: C.oxford, letterSpacing: 1, textTransform: "uppercase" }}>Sistema de administración de pagos</div>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <Inp label="Usuario" value={username} onChange={e => setUsername(e.target.value)} placeholder="usuario" autoFocus/>
+          <Inp label="Contraseña" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"/>
+          {error && <div style={{ background: C.redLight, color: C.red, fontSize: 12, padding: "7px 10px", borderRadius: 8, marginBottom: 10 }}>{error}</div>}
+          <Btn color={C.orange} loading={loading}>Iniciar sesión</Btn>
+        </form>
+      </Card>
+    </div>
+  );
+}
 // ── MENÚ Y APP PRINCIPAL ──────────────────────────────────────────────────────
 const MENU = [
   { id: "resumen", label: "Resumen", icon: "📊" },
@@ -440,6 +488,22 @@ const MENU = [
 
 export default function App() {
   const [sec, setSec] = useState("resumen");
+  const [user, setUser] = useState(() => {
+    const saved = sessionStorage.getItem("gonza_user");
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  function handleLogin(userData) {
+    sessionStorage.setItem("gonza_user", JSON.stringify(userData));
+    setUser(userData);
+  }
+
+  function handleLogout() {
+    sessionStorage.removeItem("gonza_user");
+    setUser(null);
+  }
+
+  if (!user) return <Login onLogin={handleLogin}/>;
 
   return (
     <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh" }}>
@@ -450,7 +514,12 @@ export default function App() {
           <div style={{ fontSize: 9, color: "#8fa8c8", letterSpacing: 1, textTransform: "uppercase" }}>Sistema de administración de pagos</div>
         </div>
         <div style={{ flex: 1 }}/>
-        <div style={{ fontSize: 11, color: "#8fa8c8" }}>
+        <div style={{ textAlign: "right", marginRight: 14 }}>
+          <div style={{ fontSize: 12, color: C.white, fontWeight: 700 }}>{user.nombre}</div>
+          <div style={{ fontSize: 10, color: C.gold, textTransform: "uppercase" }}>{user.rol}</div>
+        </div>
+        <Btn small color={C.orange} onClick={handleLogout}>Salir</Btn>
+        <div style={{ fontSize: 11, color: "#8fa8c8", marginLeft: 14 }}>
           {new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </div>
       </div>
