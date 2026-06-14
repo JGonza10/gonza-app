@@ -622,7 +622,7 @@ def enviar_correos_alertas():
         f"<tr><td style='padding:6px 10px;border:1px solid #ddd'>{a['deudor_nombre']}</td>"
         f"<td style='padding:6px 10px;border:1px solid #ddd'>${a['interes_mensual']}</td>"
         f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['proximo_corte']}</td>"
-        f"<td style='padding:6px 10px;border:1px solid #ddd'>{'Hoy' if a['dias_para_corte']==0 else f\"En {a['dias_para_corte']} día(s)\"}</td></tr>"
+        f"<td style='padding:6px 10px;border:1px solid #ddd'>{'Hoy' if a['dias_para_corte']==0 else 'En ' + str(a['dias_para_corte']) + ' día(s)'}</td></tr>"
         for a in alertas
     ])
     cuerpo = f"""
