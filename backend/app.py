@@ -9,9 +9,7 @@ import psycopg2.extras
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import requests as http_requests
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
@@ -561,21 +559,21 @@ def get_alertas():
 # ─── ENVÍO DE CORREOS DE ALERTA ───────────────────────────────────────────────
 
 def enviar_correo(destinatario, asunto, cuerpo_html):
-    """Envía un correo usando SMTP (Outlook)."""
-    remitente = os.environ.get("SMTP_EMAIL")
-    password = os.environ.get("SMTP_PASSWORD")
-    servidor = os.environ.get("SMTP_SERVER", "smtp.office365.com")
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = asunto
-    msg["From"] = remitente
-    msg["To"] = destinatario
-    msg.attach(MIMEText(cuerpo_html, "html"))
-
-    with smtplib.SMTP(servidor, 587) as server:
-        server.starttls()
-        server.login(remitente, password)
-        server.sendmail(remitente, destinatario, msg.as_string())
+    """Envía un correo usando la API de Resend."""
+    api_key = os.environ.get("RESEND_API_KEY")
+    resp = http_requests.post(
+        "https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "from": "GONZA <onboarding@resend.dev>",
+            "to": [destinatario],
+            "subject": asunto,
+            "html": cuerpo_html,
+        },
+        timeout=15,
+    )
+    if resp.status_code >= 400:
+        raise Exception(f"Resend error {resp.status_code}: {resp.text}")
 
 
 @app.route("/api/alertas/enviar-correos", methods=["POST"])
