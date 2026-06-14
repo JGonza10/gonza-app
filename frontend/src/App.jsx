@@ -32,11 +32,19 @@ const today = new Date().toISOString().split("T")[0];
 
 // Función genérica para llamar a la API
 async function api(path, options = {}) {
+  const user = sessionStorage.getItem("gonza_user");
+  const username = user ? JSON.parse(user).username : "";
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Username": username,
+    },
     ...options,
   });
-  if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Error ${res.status}: ${res.statusText}`);
+  }
   return res.json();
 }
 

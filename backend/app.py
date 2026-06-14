@@ -57,6 +57,39 @@ def login():
         "rol": usuario["rol"]
     })
 
+def get_rol(username):
+    """Devuelve el rol del usuario, o None si no existe."""
+    if not username:
+        return None
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT r.nombre AS rol FROM usuarios u
+        JOIN roles r ON u.rol_id = r.id
+        WHERE u.username = %s AND u.activo = TRUE;
+    """, (username,))
+    row = cur.fetchone()
+    conn.close()
+    return row["rol"] if row else None
+
+
+def requiere_rol(*roles_permitidos):
+    """Decorador: bloquea la ruta si el usuario no tiene uno de los roles permitidos.
+       El frontend debe enviar el header 'X-Username' con cada petición."""
+    def decorador(f):
+        from functools import wraps
+        @wraps(f)
+        def envoltura(*args, **kwargs):
+            username = request.headers.get("X-Username")
+            rol = get_rol(username)
+            if rol is None:
+                return jsonify({"error": "No autorizado"}), 401
+            if rol not in roles_permitidos:
+                return jsonify({"error": "No tienes permiso para esta acción"}), 403
+            return f(*args, **kwargs)
+        return envoltura
+    return decorador
+
 # ─── RUTAS: PRÉSTAMOS ────────────────────────────────────────────────────────
 
 @app.route("/api/prestamos", methods=["GET"])
@@ -70,7 +103,9 @@ def get_prestamos():
     return jsonify(list(rows))
 
 @app.route("/api/prestamos", methods=["POST"])
+@requiere_rol("administrador", "analista")
 def add_prestamo():
+
     """Registra un nuevo préstamo."""
     data = request.get_json()
     conn = get_db()
@@ -92,7 +127,9 @@ def add_prestamo():
     return jsonify({"id": nuevo_id, "mensaje": "Préstamo registrado"}), 201
 
 @app.route("/api/prestamos/<int:pid>/pagar", methods=["PATCH"])
+@requiere_rol("administrador", "analista")
 def marcar_pagado(pid):
+
     """Marca un préstamo como pagado."""
     data = request.get_json()
     conn = get_db()
@@ -120,6 +157,7 @@ def get_clientes():
     return jsonify(list(rows))
 
 @app.route("/api/clientes", methods=["POST"])
+@requiere_rol("administrador", "analista")
 def add_cliente():
     data = request.get_json()
     conn = get_db()
@@ -175,7 +213,9 @@ def get_plazos():
     return jsonify(list(rows))
 
 @app.route("/api/plazos/<int:pid>/abonar", methods=["PATCH"])
+@requiere_rol("administrador", "analista")
 def abonar_plazo(pid):
+
     """Registra un abono mensual al artículo a plazos."""
     conn = get_db()
     cur = conn.cursor()
