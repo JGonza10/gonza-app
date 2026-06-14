@@ -8,7 +8,6 @@ import psycopg2
 import psycopg2.extras
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from werkzeug.security import check_password_hash
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
@@ -23,39 +22,6 @@ def get_db():
         os.environ.get("DATABASE_URL"),
         cursor_factory=psycopg2.extras.RealDictCursor  # devuelve dicts, no tuplas
     )
-
-# ─── RUTAS: AUTENTICACIÓN ─────────────────────────────────────────────────────
-
-@app.route("/api/login", methods=["POST"])
-def login():
-    """Verifica usuario y contraseña, devuelve datos del usuario y su rol."""
-    data = request.get_json()
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT u.id, u.username, u.nombre, u.password_hash, u.activo, r.nombre AS rol
-        FROM usuarios u
-        JOIN roles r ON u.rol_id = r.id
-        WHERE u.username = %s;
-    """, (data.get("username", ""),))
-    usuario = cur.fetchone()
-    conn.close()
-
-    if not usuario:
-        return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
-
-    if not usuario["activo"]:
-        return jsonify({"error": "Usuario inactivo"}), 403
-
-    if not check_password_hash(usuario["password_hash"], data.get("password", "")):
-        return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
-
-    return jsonify({
-        "id": usuario["id"],
-        "username": usuario["username"],
-        "nombre": usuario["nombre"],
-        "rol": usuario["rol"]
-    })
 
 # ─── RUTAS: PRÉSTAMOS ────────────────────────────────────────────────────────
 
