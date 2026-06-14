@@ -268,29 +268,86 @@ function ModClientes() {
 
 // ── MÓDULO: AHORRO ────────────────────────────────────────────────────────────
 function ModAhorro() {
-  const { data: ahorros, loading } = useApiData("/api/ahorros");
+  const { data: ahorros, loading, reload } = useApiData("/api/ahorros");
+  const { data: clientesSinAhorro, reload: reloadCSA } = useApiData("/api/clientes-sin-ahorro");
+  const [f, setF] = useState({ cliente_id: "", cantidad: "" });
+  const [saving, setSaving] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editValor, setEditValor] = useState("");
+
   const total = ahorros.reduce((a, x) => a + parseFloat(x.cantidad || 0), 0);
+
+  async function handleAgregar() {
+    if (!f.cliente_id) return alert("Selecciona un cliente");
+    setSaving(true);
+    try {
+      await api("/api/ahorros", {
+        method: "POST",
+        body: JSON.stringify({ cliente_id: parseInt(f.cliente_id), cantidad: parseFloat(f.cantidad || 0) }),
+      });
+      setF({ cliente_id: "", cantidad: "" });
+      reload();
+      reloadCSA();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  }
+
+  function empezarEdicion(a) {
+    setEditId(a.id);
+    setEditValor(a.cantidad);
+  }
+
+  async function guardarEdicion(aid) {
+    try {
+      await api(`/api/ahorros/${aid}`, { method: "PATCH", body: JSON.stringify({ cantidad: parseFloat(editValor || 0) }) });
+      setEditId(null);
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+  }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando ahorros...</p>;
   return (
     <div>
       <SectionTitle>Ahorro</SectionTitle>
+      <Card style={{ background: C.navyLight, marginBottom: 16 }}>
+        <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Total en ahorros del grupo</p>
+        <p style={{ margin: "2px 0 0", fontSize: 24, fontWeight: 700, color: C.navy }}>{fmt(total)}</p>
+      </Card>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 16 }}>
-        <Card style={{ background: C.navyLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Total en ahorros del grupo</p>
-          <p style={{ margin: "2px 0 0", fontSize: 24, fontWeight: 700, color: C.navy }}>{fmt(total)}</p>
+        <Card>
+          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Dar de alta ahorro</p>
+          {clientesSinAhorro.length === 0
+            ? <p style={{ fontSize: 12, color: C.oxford }}>Todos los clientes ya tienen registro de ahorro.</p>
+            : <>
+                <Sel label="Cliente" value={f.cliente_id} onChange={e => setF(x => ({ ...x, cliente_id: e.target.value }))}>
+                  <option value="">Selecciona un cliente</option>
+                  {clientesSinAhorro.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat} {c.apellido_mat || ""}</option>)}
+                </Sel>
+                <Inp label="Cantidad inicial ($)" type="number" value={f.cantidad} onChange={e => setF(x => ({ ...x, cantidad: e.target.value }))}/>
+                <Btn onClick={handleAgregar} loading={saving}>Dar de alta</Btn>
+              </>
+          }
         </Card>
         <Card>
+          <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Ahorros por integrante ({ahorros.length})</p>
           <Tabla
-            headers={["Apellido P.", "Apellido M.", "Nombre", "Cantidad"]}
-            rows={ahorros.map(a => [a.apellido_pat, a.apellido_mat, a.nombre, fmt(a.cantidad)])}
+            headers={["Apellido P.", "Apellido M.", "Nombre", "Cantidad", "Acción"]}
+            rows={ahorros.map(a => [
+              a.apellido_pat, a.apellido_mat, a.nombre,
+              editId === a.id
+                ? <input key={`i${a.id}`} type="number" value={editValor} onChange={e => setEditValor(e.target.value)}
+                    style={{ width: 90, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>
+                : fmt(a.cantidad),
+              editId === a.id
+                ? <Btn key={`g${a.id}`} small color={C.green} onClick={() => guardarEdicion(a.id)}>Guardar</Btn>
+                : <Btn key={`e${a.id}`} small onClick={() => empezarEdicion(a)}>Editar</Btn>
+            ])}
           />
         </Card>
       </div>
     </div>
   );
 }
-
 // ── MÓDULO: CAJA ──────────────────────────────────────────────────────────────
 function ModCaja() {
   const { data: caja, loading } = useApiData("/api/caja");

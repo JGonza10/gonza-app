@@ -252,8 +252,61 @@ def get_ahorros():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        SELECT a.id, c.nombre, c.apellido_pat, c.apellido_mat, a.cantidad
+        SELECT a.id, a.cliente_id, c.nombre, c.apellido_pat, c.apellido_mat, a.cantidad
         FROM ahorros a JOIN clientes c ON a.cliente_id = c.id
+        ORDER BY c.apellido_pat;
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
+
+@app.route("/api/ahorros", methods=["POST"])
+@requiere_rol("administrador", "analista")
+def add_ahorro():
+    """Da de alta el registro de ahorro de un cliente (uno por cliente)."""
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO ahorros (cliente_id, cantidad)
+            VALUES (%s, %s)
+            RETURNING id;
+        """, (data["cliente_id"], data.get("cantidad", 0)))
+        nuevo_id = cur.fetchone()["id"]
+        conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        conn.close()
+        return jsonify({"error": "Este cliente ya tiene un registro de ahorro"}), 400
+    conn.close()
+    return jsonify({"id": nuevo_id}), 201
+
+@app.route("/api/ahorros/<int:aid>", methods=["PATCH"])
+@requiere_rol("administrador", "analista")
+def update_ahorro(aid):
+    """Actualiza el monto de ahorro de un cliente."""
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE ahorros SET cantidad = %s, updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s;
+    """, (data["cantidad"], aid))
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Ahorro actualizado"})
+
+@app.route("/api/clientes-sin-ahorro", methods=["GET"])
+@requiere_rol("administrador", "analista")
+def get_clientes_sin_ahorro():
+    """Clientes que aún no tienen registro en ahorros (para el formulario de alta)."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT c.id, c.nombre, c.apellido_pat, c.apellido_mat
+        FROM clientes c
+        WHERE c.id NOT IN (SELECT cliente_id FROM ahorros)
         ORDER BY c.apellido_pat;
     """)
     rows = cur.fetchall()
