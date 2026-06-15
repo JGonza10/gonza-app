@@ -417,7 +417,112 @@ def add_caja():
         VALUES (%s, %s, %s, %s, %s)
         RETURNING id;
     """, (
-        participante,
+        participante,function ModPrestamos() {
+  const { data: prestamos, loading, reload } = useApiData("/api/prestamos");
+  const [f, setF] = useState({ deudor_nombre: "", fecha_prestamo: today, monto: "", nota: "" });
+  const [saving, setSaving] = useState(false);
+  const [abonoPrestamo, setAbonoPrestamo] = useState(null);
+  const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
+
+  const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
+  const pagados = prestamos.filter(p => p.pagado);
+  const totalCartera = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
+  const totalIntereses = activos.reduce((a, p) => a + parseFloat(p.interes_mensual || 0), 0);
+
+  async function handleAgregar() {
+    if (!f.deudor_nombre || !f.monto) return alert("Nombre y monto requeridos");
+    setSaving(true);
+    try {
+      await api("/api/prestamos", {
+        method: "POST",
+        body: JSON.stringify({
+          ...f,
+          monto: parseFloat(f.monto),
+          interes_mensual: parseFloat(f.monto) * 0.10,
+        }),
+      });
+      setF({ deudor_nombre: "", fecha_prestamo: today, monto: "", nota: "" });
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function handlePagar(pid) {
+    const fecha = prompt("Fecha de pago (YYYY-MM-DD):", today) || today;
+    try {
+      await api(`/api/prestamos/${pid}/pagar`, {
+        method: "PATCH",
+        body: JSON.stringify({ fecha_pago: fecha, tipo_pago: "transferencia" }),
+      });
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+  }
+
+  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando préstamos...</p>;
+
+  return (
+    <div>
+      <SectionTitle>Préstamos</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 14 }}>
+        {[
+          { l: "Cartera activa", v: fmt(totalCartera), c: C.navy, bg: C.navyLight },
+          { l: "Intereses esperados", v: fmt(totalIntereses), c: "#8B6914", bg: C.goldLight },
+          { l: "Préstamos pagados", v: pagados.length, c: C.green, bg: C.greenLight },
+        ].map((s2, i) => <Card key={i} style={{ background: s2.bg }}><p style={{ margin: 0, fontSize: 11, color: C.oxford }}>{s2.l}</p><p style={{ margin: "2px 0 0", fontSize: 20, fontWeight: 700, color: s2.c }}>{s2.v}</p></Card>)}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16, marginBottom: 16 }}>
+        <Card>
+          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Registrar préstamo</p>
+          <Inp label="Nombre del deudor" value={f.deudor_nombre} onChange={s("deudor_nombre")} placeholder="Nombre completo"/>
+          <Inp label="Fecha del préstamo" type="date" value={f.fecha_prestamo} onChange={s("fecha_prestamo")}/>
+          <Inp label="Monto prestado ($)" type="number" value={f.monto} onChange={s("monto")}/>
+          {f.monto && <div style={{ background: C.goldLight, borderRadius: 8, padding: "7px 10px", fontSize: 12, marginBottom: 8 }}>
+            Interés (10%): <b>{fmt(parseFloat(f.monto) * 0.10)}</b>
+          </div>}
+          <Inp label="Notas" value={f.nota} onChange={s("nota")} placeholder="Observaciones"/>
+          <Btn color={C.orange} onClick={handleAgregar} loading={saving}>Registrar préstamo</Btn>
+        </Card>
+        <Card>
+          <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Préstamos activos ({activos.length})</p>
+          <Tabla
+            headers={["#", "Deudor", "Fecha", "Monto", "Interés (10%)", "Capital abonado", "Saldo restante", "Nota", "Acciones"]}
+            rows={activos.map(p => {
+              const saldo = parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0);
+              return [
+                p.id, p.deudor_nombre, p.fecha_prestamo,
+                fmt(p.monto), fmt(p.interes_mensual), fmt(p.capital_abonado || 0),
+                <b key={`s${p.id}`} style={{ color: saldo <= 0 ? C.green : C.orange }}>{fmt(saldo)}</b>,
+                p.nota || "—",
+                <div key={`acc${p.id}`} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  <Btn small color={C.orange} onClick={() => setAbonoPrestamo(p)}>Abonar</Btn>
+                  <Btn small color={C.green} onClick={() => handlePagar(p.id)}>✓ Liquidar</Btn>
+                </div>
+              ];
+            })}
+          />
+        </Card>
+      </div>
+      {pagados.length > 0 && <Card>
+        <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Pagados ({pagados.length})</p>
+        <Tabla
+          headers={["#", "Deudor", "Fecha préstamo", "Monto", "Fecha pago", "Nota"]}
+          rows={pagados.map(p => [p.id, p.deudor_nombre, p.fecha_prestamo, fmt(p.monto), p.fecha_pago || "—", p.nota || "—"])}
+        />
+      </Card>}
+
+      {abonoPrestamo && (
+        <ModalAbono
+          prestamo={abonoPrestamo}
+          onClose={() => setAbonoPrestamo(null)}
+          onSaved={() => { setAbonoPrestamo(null); reload(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+
+
         data["cliente_id"],
         data.get("cuota", 0),
         data.get("capital", 0),

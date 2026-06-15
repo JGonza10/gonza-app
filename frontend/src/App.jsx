@@ -437,7 +437,8 @@ function ModAhorro() {
 // ── MÓDULO: CAJA ──────────────────────────────────────────────────────────────
 function ModCaja() {
   const { data: caja, loading, reload } = useApiData("/api/caja");
-  const [f, setF] = useState({ participante: "", cuota: "", capital: "", fecha_inicio: "" });
+  const { data: clientes } = useApiData("/api/clientes");
+  const [f, setF] = useState({ cliente_id: "", cuota: "", capital: "", fecha_inicio: "" });
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState(null);
   const [editF, setEditF] = useState({});
@@ -447,19 +448,19 @@ function ModCaja() {
   const totalCuota = caja.reduce((a, c) => a + parseFloat(c.cuota || 0), 0);
 
   async function handleAgregar() {
-    if (!f.participante) return alert("Nombre del participante requerido");
+    if (!f.cliente_id) return alert("Selecciona un cliente");
     setSaving(true);
     try {
       await api("/api/caja", {
         method: "POST",
         body: JSON.stringify({
-          participante: f.participante,
+          cliente_id: parseInt(f.cliente_id),
           cuota: parseFloat(f.cuota || 0),
           capital: parseFloat(f.capital || 0),
           fecha_inicio: f.fecha_inicio,
         }),
       });
-      setF({ participante: "", cuota: "", capital: "", fecha_inicio: "" });
+      setF({ cliente_id: "", cuota: "", capital: "", fecha_inicio: "" });
       reload();
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
@@ -508,45 +509,52 @@ function ModCaja() {
           <p style={{ margin: "2px 0 0", fontSize: 22, fontWeight: 700, color: "#8B6914" }}>{fmt(totalCuota)}</p>
         </Card>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16 }}>
-        <Card>
-          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Agregar participante</p>
-          <Inp label="Nombre del participante" value={f.participante} onChange={s("participante")} placeholder="Ej. JUANA"/>
+
+      <Card style={{ marginBottom: 16 }}>
+        <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Agregar participante</p>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
+          <Sel label="Cliente" value={f.cliente_id} onChange={s("cliente_id")}>
+            <option value="">Selecciona un cliente</option>
+            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat} {c.apellido_mat || ""}</option>)}
+          </Sel>
           <Inp label="Cuota quincenal ($)" type="number" value={f.cuota} onChange={s("cuota")}/>
           <Inp label="Capital acumulado ($)" type="number" value={f.capital} onChange={s("capital")}/>
           <Inp label="Fecha de inicio" value={f.fecha_inicio} onChange={s("fecha_inicio")} placeholder="15-ene"/>
-          <Btn onClick={handleAgregar} loading={saving}>Agregar</Btn>
-        </Card>
-        <Card>
-          <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Participantes ({caja.length})</p>
-          <Tabla
-            headers={["No.", "Nombre", "Cuota quincenal", "Capital acumulado", "Inicio", "Acciones"]}
-            rows={caja.map((c, i) => {
-              if (editId === c.id) {
-                return [
-                  i + 1,
-                  <input key={`p${c.id}`} value={editF.participante} onChange={e => setEditF(x => ({ ...x, participante: e.target.value }))}
-                    style={{ width: 110, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
-                  <input key={`q${c.id}`} type="number" value={editF.cuota} onChange={e => setEditF(x => ({ ...x, cuota: e.target.value }))}
-                    style={{ width: 80, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
-                  <input key={`c${c.id}`} type="number" value={editF.capital} onChange={e => setEditF(x => ({ ...x, capital: e.target.value }))}
-                    style={{ width: 90, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
-                  <input key={`f${c.id}`} value={editF.fecha_inicio} onChange={e => setEditF(x => ({ ...x, fecha_inicio: e.target.value }))}
-                    style={{ width: 70, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
-                  <Btn key={`g${c.id}`} small color={C.green} onClick={() => guardarEdicion(c.id)}>Guardar</Btn>
-                ];
-              }
+          <div style={{ marginBottom: 9 }}>
+            <Btn onClick={handleAgregar} loading={saving}>Agregar</Btn>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Participantes ({caja.length})</p>
+        <Tabla
+          headers={["No.", "Nombre", "Cuota quincenal", "Capital acumulado", "Inicio", "Acciones"]}
+          rows={caja.map((c, i) => {
+            if (editId === c.id) {
               return [
-                i + 1, c.participante, fmt(c.cuota), fmt(c.capital), c.fecha_inicio || "—",
-                <div key={`acc${c.id}`} style={{ display: "flex", gap: 4 }}>
-                  <Btn small onClick={() => empezarEdicion(c)}>Editar</Btn>
-                  <Btn small color={C.red} onClick={() => handleBorrar(c.id)}>Borrar</Btn>
-                </div>
+                i + 1,
+                <input key={`p${c.id}`} value={editF.participante} onChange={e => setEditF(x => ({ ...x, participante: e.target.value }))}
+                  style={{ width: 130, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                <input key={`q${c.id}`} type="number" value={editF.cuota} onChange={e => setEditF(x => ({ ...x, cuota: e.target.value }))}
+                  style={{ width: 80, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                <input key={`c${c.id}`} type="number" value={editF.capital} onChange={e => setEditF(x => ({ ...x, capital: e.target.value }))}
+                  style={{ width: 90, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                <input key={`f${c.id}`} value={editF.fecha_inicio} onChange={e => setEditF(x => ({ ...x, fecha_inicio: e.target.value }))}
+                  style={{ width: 70, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                <Btn key={`g${c.id}`} small color={C.green} onClick={() => guardarEdicion(c.id)}>Guardar</Btn>
               ];
-            })}
-          />
-        </Card>
-      </div>
+            }
+            return [
+              i + 1, c.participante, fmt(c.cuota), fmt(c.capital), c.fecha_inicio || "—",
+              <div key={`acc${c.id}`} style={{ display: "flex", gap: 4 }}>
+                <Btn small onClick={() => empezarEdicion(c)}>Editar</Btn>
+                <Btn small color={C.red} onClick={() => handleBorrar(c.id)}>Borrar</Btn>
+              </div>
+            ];
+          })}
+        />
+      </Card>
     </div>
   );
 }
