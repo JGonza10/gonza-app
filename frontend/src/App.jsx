@@ -251,17 +251,18 @@ function ModClientes() {
   return (
     <div>
       <SectionTitle>Clientes</SectionTitle>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1.6fr", gap:16 }}>
-        <Card>
-          <p style={{ margin:"0 0 10px", fontSize:13, fontWeight:700, color:C.oxford }}>Registrar cliente</p>
+      <Card style={{ marginBottom:14 }}>
+        <p style={{ margin:"0 0 10px", fontSize:13, fontWeight:700, color:C.oxford }}>Registrar cliente</p>
+        <div style={{ display:"grid", gridTemplateColumns:"1.4fr 1fr 1fr 0.9fr 1.5fr auto", gap:10, alignItems:"end" }}>
           <Inp label="Nombre(s)"        value={f.nombre}       onChange={s("nombre")}       placeholder="JUAN"/>
           <Inp label="Apellido paterno" value={f.apellido_pat} onChange={s("apellido_pat")} placeholder="GONZALEZ"/>
           <Inp label="Apellido materno" value={f.apellido_mat} onChange={s("apellido_mat")} placeholder="MENDOZA"/>
           <Inp label="Teléfono"         value={f.telefono}     onChange={s("telefono")}     placeholder="555-0000"/>
           <Inp label="Dirección"        value={f.direccion}    onChange={s("direccion")}    placeholder="Calle y número"/>
-          <Btn onClick={handleAgregar} loading={saving}>Guardar</Btn>
-        </Card>
-        <Card>
+          <div style={{ marginBottom:9 }}><Btn onClick={handleAgregar} loading={saving}>Guardar</Btn></div>
+        </div>
+      </Card>
+      <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
             <p style={{ margin:0, fontSize:13, fontWeight:700, color:C.oxford }}>Directorio ({clientes.length})</p>
             <Buscador value={buscar} onChange={setBuscar} placeholder="Buscar cliente..."/>
@@ -289,8 +290,7 @@ function ModClientes() {
               ];
             })}
           />
-        </Card>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -689,17 +689,19 @@ function ModPagosPlazos() {
     <div>
       <SectionTitle>Pagos a plazos</SectionTitle>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 2.5fr", gap:16 }}>
-        <Card>
+        <Card style={{ marginBottom:14, gridColumn:"1 / -1" }}>
           <p style={{ margin:"0 0 10px", fontSize:13, fontWeight:700, color:C.oxford }}>Agregar artículo</p>
-          <Inp label="Material" value={f.material} onChange={s("material")} placeholder="Ej. Refrigerador"/>
-          <Inp label="Costo total ($)" type="number" value={f.costo} onChange={s("costo")}/>
-          <Inp label="Meses totales" type="number" value={f.meses_total} onChange={s("meses_total")}/>
-          <Inp label="Cuota mensual ($)" type="number" value={f.cuota} onChange={s("cuota")}/>
-          <Inp label="Fecha registro" type="date" value={f.fecha} onChange={s("fecha")}/>
-          <Inp label="Nota" value={f.nota} onChange={s("nota")} placeholder="Observaciones"/>
-          <Btn onClick={handleAgregar} loading={saving}>Agregar</Btn>
+          <div style={{ display:"grid", gridTemplateColumns:"1.5fr 1fr 0.8fr 1fr 1fr 1.5fr auto", gap:10, alignItems:"end" }}>
+            <Inp label="Material" value={f.material} onChange={s("material")} placeholder="Ej. Refrigerador"/>
+            <Inp label="Costo total ($)" type="number" value={f.costo} onChange={s("costo")}/>
+            <Inp label="Meses" type="number" value={f.meses_total} onChange={s("meses_total")}/>
+            <Inp label="Cuota mensual ($)" type="number" value={f.cuota} onChange={s("cuota")}/>
+            <Inp label="Fecha registro" type="date" value={f.fecha} onChange={s("fecha")}/>
+            <Inp label="Nota" value={f.nota} onChange={s("nota")} placeholder="Observaciones"/>
+            <div style={{ marginBottom:9 }}><Btn onClick={handleAgregar} loading={saving}>Agregar</Btn></div>
+          </div>
         </Card>
-        <Card>
+        <Card style={{ gridColumn:"1 / -1" }}>
           <p style={{ margin:"0 0 8px", fontSize:13, fontWeight:700, color:C.oxford }}>Artículos ({plazos.length})</p>
           <Tabla
             headers={["Material","Costo","Meses","Pagados","Cuota","Abonado","Restante","Nota","Avance","Acciones"]}
@@ -776,23 +778,25 @@ function ModUsuarios() {
     <div>
       <SectionTitle>Gestión de usuarios</SectionTitle>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1.6fr", gap:16 }}>
-        <Card>
+        <Card style={{ marginBottom:14, gridColumn:"1 / -1" }}>
           <p style={{ margin:"0 0 10px", fontSize:13, fontWeight:700, color:C.oxford }}>Nuevo usuario</p>
-          <Inp label="Nombre completo"   value={f.nombre}    onChange={s("nombre")}    placeholder="Ej. Juan Pérez"/>
-          <Inp label="Usuario (login)"   value={f.username}  onChange={s("username")}  placeholder="jperez"/>
-          <Inp label="Contraseña" type="password" value={f.password} onChange={s("password")} placeholder="••••••••"/>
-          <Inp label="Correo electrónico" value={f.correo}   onChange={s("correo")}    placeholder="correo@ejemplo.com"/>
-          <Sel label="Rol" value={f.rol_id} onChange={s("rol_id")}>
-            <option value="">Selecciona un rol</option>
-            {roles.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
-          </Sel>
-          <Sel label="Cliente vinculado (rol usuario)" value={f.cliente_id} onChange={s("cliente_id")}>
-            <option value="">— Sin vincular —</option>
-            {clientes.filter(c=>c.activo!==false).map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat}</option>)}
-          </Sel>
-          <Btn onClick={handleAgregar} loading={saving}>Crear usuario</Btn>
+          <div style={{ display:"grid", gridTemplateColumns:"1.5fr 1fr 1fr 1.5fr 0.8fr 1.5fr auto", gap:10, alignItems:"end" }}>
+            <Inp label="Nombre completo"    value={f.nombre}   onChange={s("nombre")}   placeholder="Ej. Juan Pérez"/>
+            <Inp label="Usuario (login)"    value={f.username} onChange={s("username")} placeholder="jperez"/>
+            <Inp label="Contraseña" type="password" value={f.password} onChange={s("password")} placeholder="••••••••"/>
+            <Inp label="Correo electrónico" value={f.correo}   onChange={s("correo")}   placeholder="correo@ejemplo.com"/>
+            <Sel label="Rol" value={f.rol_id} onChange={s("rol_id")}>
+              <option value="">Rol</option>
+              {roles.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+            </Sel>
+            <Sel label="Cliente vinculado" value={f.cliente_id} onChange={s("cliente_id")}>
+              <option value="">— Sin vincular —</option>
+              {clientes.filter(c=>c.activo!==false).map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat}</option>)}
+            </Sel>
+            <div style={{ marginBottom:9 }}><Btn onClick={handleAgregar} loading={saving}>Crear</Btn></div>
+          </div>
         </Card>
-        <Card>
+        <Card style={{ gridColumn:"1 / -1" }}>
           <p style={{ margin:"0 0 8px", fontSize:13, fontWeight:700, color:C.oxford }}>Usuarios del sistema ({usuarios.length})</p>
           <Tabla
             headers={["ID","Nombre","Usuario","Correo","Rol","Cliente vinculado","Estado","Acciones"]}
@@ -1069,7 +1073,7 @@ export default function App() {
           <div style={{ fontSize:12, color:C.white, fontWeight:700 }}>{user.nombre}</div>
           <div style={{ fontSize:10, color:C.gold, textTransform:"uppercase" }}>{user.rol}</div>
         </div>
-        <AlertasBell/>
+        {["administrador","analista"].includes(user.rol) && <AlertasBell/>}
         <Btn small color={C.orange} onClick={handleLogout}>Salir</Btn>
         <div style={{ fontSize:11, color:"#8fa8c8", marginLeft:14 }}>
           {new Date().toLocaleDateString("es-MX", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}
