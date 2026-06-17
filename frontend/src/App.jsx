@@ -759,15 +759,19 @@ function ModPagosPlazos() {
   return (
     <div>
       <SectionTitle>Pagos a plazos</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr", gap: 16 }}>
-        <Card>
-          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Agregar artículo</p>
-          <Inp label="Material" value={f.material} onChange={s("material")} placeholder="Ej. Refrigerador"/>
+      {/* Formulario HORIZONTAL */}
+      <Card style={{ marginBottom: 16 }}>
+        <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Agregar artículo</p>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
+          <Inp label="Material / Artículo" value={f.material} onChange={s("material")} placeholder="Ej. Refrigerador"/>
           <Inp label="Costo total ($)" type="number" value={f.costo} onChange={s("costo")}/>
           <Inp label="Meses totales" type="number" value={f.meses_total} onChange={s("meses_total")}/>
           <Inp label="Cuota mensual ($)" type="number" value={f.cuota} onChange={s("cuota")}/>
-          <Btn onClick={handleAgregar} loading={saving}>Agregar</Btn>
-        </Card>
+          <div style={{ marginBottom: 9 }}><Btn onClick={handleAgregar} loading={saving}>Agregar</Btn></div>
+        </div>
+      </Card>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
+        <Card>
         <Card>
           <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Artículos ({plazos.length})</p>
           <Tabla
@@ -980,7 +984,9 @@ function ModConfiguracion() {
   const [dias, setDias] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingCorreo, setSavingCorreo] = useState(false);
   const [msg, setMsg] = useState("");
+  const [formatoBackup, setFormatoBackup] = useState("xlsx");
 
   useEffect(() => {
     api("/api/configuracion/dias_anticipacion")
@@ -1003,14 +1009,35 @@ function ModConfiguracion() {
     finally { setSaving(false); }
   }
 
-  async function handleEnviarCorreos() {
-    if (!window.confirm("¿Enviar correos de alerta ahora?")) return;
-    setSaving(true);
+  // Envía en un solo correo: alertas + informe ejecutivo + respaldo
+  async function handleEnviarCorreoCombinado() {
+    if (!window.confirm("¿Enviar correo completo ahora?\n\nIncluye:\n• Alertas de réditos\n• Informe ejecutivo\n• Respaldo en " + formatoBackup.toUpperCase())) return;
+    setSavingCorreo(true);
     try {
-      const res = await api("/api/alertas/enviar-correos", { method: "POST" });
-      alert(`Correos enviados: ${res.enviados} · Alertas activas: ${res.alertas}${res.errores?.length ? "\nErrores: " + res.errores.join(", ") : ""}`);
-    } catch (e) { alert("Error: " + e.message); }
-    finally { setSaving(false); }
+      // 1. Alertas
+      const resAlertas = await api("/api/alertas/enviar-correos", { method: "POST" });
+      // 2. Informe ejecutivo
+      const resInforme = await api("/api/resumen/informe", { method: "POST" });
+      // 3. Respaldo
+      const resBackup = await api("/api/backup/enviar", {
+        method: "POST",
+        body: JSON.stringify({ formato: formatoBackup }),
+      });
+
+      const lineas = [
+        `✅ Alertas: ${resAlertas.enviados ?? 0} correo(s) enviado(s) · ${resAlertas.alertas ?? 0} alerta(s)`,
+        `✅ Informe ejecutivo: ${resInforme.enviados ?? 0} correo(s) enviado(s)`,
+        `✅ Respaldo (${formatoBackup.toUpperCase()}): ${resBackup.enviados ?? 0} correo(s) enviado(s)`,
+      ];
+      const errores = [
+        ...(resAlertas.errores || []),
+        ...(resInforme.errores || []),
+        ...(resBackup.errores || []),
+      ];
+      if (errores.length) lineas.push("⚠️ Errores: " + errores.join(", "));
+      alert(lineas.join("\n"));
+    } catch (e) { alert("Error al enviar: " + e.message); }
+    finally { setSavingCorreo(false); }
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando configuración...</p>;
@@ -1019,7 +1046,8 @@ function ModConfiguracion() {
     <div>
       <SectionTitle>Configuración del sistema</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* Alertas */}
+
+        {/* Alertas — días de anticipación */}
         <Card>
           <p style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: C.navy }}>⚙️ Alertas de réditos</p>
           <p style={{ margin: "0 0 14px", fontSize: 12, color: C.oxford, lineHeight: 1.6 }}>
@@ -1040,17 +1068,54 @@ function ModConfiguracion() {
           {msg && <div style={{ background: C.greenLight, color: C.green, fontSize: 12, padding: "7px 10px", borderRadius: 8, marginTop: 4 }}>{msg}</div>}
         </Card>
 
-        {/* Correos */}
+        {/* Correo combinado */}
         <Card>
-          <p style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: C.navy }}>📧 Envío de correos</p>
-          <p style={{ margin: "0 0 14px", fontSize: 12, color: C.oxford, lineHeight: 1.6 }}>
-            Los correos de alerta se envían automáticamente cada día a las 8:00 AM (cron job). También puedes enviarlos manualmente ahora.
+          <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: C.navy }}>📧 Envío de correos</p>
+          <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford, lineHeight: 1.6 }}>
+            Envía en <b>un solo clic</b> el correo diario completo: alertas de réditos, informe ejecutivo y respaldo de la base de datos.
           </p>
-          <Btn color={C.navy} onClick={handleEnviarCorreos} loading={saving}>
-            📨 Enviar correos de alerta ahora
+
+          {/* Selector de formato del respaldo */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.oxford, marginBottom: 6 }}>
+              Formato del respaldo adjunto:
+            </label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {["xlsx", "csv", "sql"].map(f => (
+                <button key={f} onClick={() => setFormatoBackup(f)} style={{
+                  padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  border: `2px solid ${formatoBackup === f ? C.orange : C.border}`,
+                  background: formatoBackup === f ? C.orangeLight : C.lightGray,
+                  color: formatoBackup === f ? C.orange : C.oxford,
+                }}>
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Botón principal */}
+          <Btn color={C.navy} onClick={handleEnviarCorreoCombinado} loading={savingCorreo}>
+            📨 Enviar correo completo ahora
           </Btn>
-          <div style={{ background: C.goldLight, borderRadius: 8, padding: "10px 12px", marginTop: 12, fontSize: 12, color: "#8B6914" }}>
-            <b>Destinatarios:</b> todos los usuarios con rol <b>administrador</b> o <b>analista</b> que tengan correo registrado en la base de datos.
+
+          {/* Detalle de lo que incluye */}
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+            {[
+              { icon: "🔔", texto: "Alertas de réditos próximos a vencer" },
+              { icon: "📊", texto: "Informe ejecutivo (cartera, caja, top deudores)" },
+              { icon: "💾", texto: `Respaldo de base de datos en ${formatoBackup.toUpperCase()}` },
+            ].map((item, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: C.lightGray, borderRadius: 8, padding: "6px 10px", fontSize: 12, color: C.oxford }}>
+                <span style={{ fontSize: 15 }}>{item.icon}</span>
+                {item.texto}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ background: C.goldLight, borderRadius: 8, padding: "8px 12px", marginTop: 12, fontSize: 11, color: "#8B6914" }}>
+            <b>Destinatarios:</b> usuarios con rol <b>administrador</b> o <b>analista</b> que tengan correo registrado.
+            Los correos también se envían automáticamente cada día a las <b>8:00 AM</b>.
           </div>
         </Card>
       </div>
