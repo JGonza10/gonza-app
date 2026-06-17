@@ -1263,6 +1263,178 @@ def get_caja_resumen():
     conn.close()
     return jsonify(dict(row))
 
+# ─── RUTAS: RESET DE CONTRASEÑA (acceso público) ─────────────────────────────
+
+@app.route("/api/usuario-existe", methods=["POST"])
+def usuario_existe():
+    """
+    Verifica si un usuario existe (para el flujo de recuperación de contraseña).
+    Solo devuelve nombre y username — no expone datos sensibles.
+    """
+    data = request.get_json()
+    username = data.get("username", "").strip()
+    if not username:
+        return jsonify({"error": "Username requerido"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT u.id, u.username, u.nombre, u.activo
+        FROM usuarios u
+        WHERE u.username = %s;
+    """, (username,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    if not row["activo"]:
+        return jsonify({"error": "Usuario inactivo"}), 403
+
+    return jsonify({"username": row["username"], "nombre": row["nombre"]})
+
+
+@app.route("/api/usuarios/reset-password", methods=["POST"])
+def reset_password():
+    """
+    Restablece la contraseña de un usuario dado su username.
+    No requiere autenticación (flujo de recuperación desde login).
+    La nueva contraseña debe tener al menos 6 caracteres.
+    """
+    data = request.get_json()
+    username = data.get("username", "").strip()
+    new_password = data.get("new_password", "")
+
+    if not username or not new_password:
+        return jsonify({"error": "Username y nueva contraseña son requeridos"}), 400
+    if len(new_password) < 6:
+        return jsonify({"error": "La contraseña debe tener al menos 6 caracteres"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, activo FROM usuarios WHERE username = %s;", (username,))
+    row = cur.fetchone()
+
+    if not row:
+        conn.close()
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    if not row["activo"]:
+        conn.close()
+        return jsonify({"error": "Usuario inactivo"}), 403
+
+    cur.execute(
+        "UPDATE usuarios SET password_hash = %s WHERE username = %s;",
+        (generate_password_hash(new_password, method="pbkdf2:sha256"), username)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Contraseña restablecida correctamente"})
+
+
+# ─── RUTAS: MOVIMIENTOS DE CAJA ───────────────────────────────────────────────
+
+@app.route("/api/caja/<int:cid>/movimientos", methods=["GET"])
+def get_movimientos_caja(cid):
+    """
+    Devuelve el historial de aportaciones quincenales de un participante.
+    Incluye el acumulado progresivo calculado con window function.
+    """
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+            id,
+            fecha::text         AS fecha,
+            monto,
+            SUM(monto) OVER (
+                ORDER BY fecha, id
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            )                   AS acumulado,
+            nota
+        FROM caja_movimientos
+        WHERE caja_id = %s
+        ORDER BY fecha, id;
+    """, (cid,))
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
+
+
+@app.route("/api/caja/<int:cid>/movimientos", methods=["POST"])
+@requiere_rol("administrador", "analista")
+def add_movimiento_caja(cid):
+    """
+    Registra una nueva aportación quincenal para un participante.
+    Espera: { fecha, monto, nota }
+    """
+    data = request.get_json()
+
+    monto = float(data.get("monto", 0))
+    if monto <= 0:
+        return jsonify({"error": "El monto debe ser mayor a 0"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Verificar que el participante existe
+    cur.execute("SELECT id FROM caja WHERE id = %s;", (cid,))
+    if not cur.fetchone():
+        conn.close()
+        return jsonify({"error": "Participante no encontrado"}), 404
+
+    cur.execute("""
+        INSERT INTO caja_movimientos (caja_id, fecha, monto, nota)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id;
+    """, (
+        cid,
+        data.get("fecha", "today"),
+        monto,
+        data.get("nota", ""),
+    ))
+    nuevo_id = cur.fetchone()["id"]
+    conn.commit()
+    conn.close()
+    return jsonify({"id": nuevo_id, "mensaje": "Aportación registrada"}), 201
+
+
+@app.route("/api/caja/<int:cid>/movimientos/<int:mid>", methods=["DELETE"])
+@requiere_rol("administrador")
+def delete_movimiento_caja(cid, mid):
+    """Elimina una aportación específica (solo administradores)."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM caja_movimientos WHERE id = %s AND caja_id = %s;",
+        (mid, cid)
+    )
+    if cur.rowcount == 0:
+        conn.close()
+        return jsonify({"error": "Movimiento no encontrado"}), 404
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Movimiento eliminado"})
+
+
+@app.route("/api/caja/resumen", methods=["GET"])
+def get_caja_resumen():
+    """
+    Resumen global de la caja: total acumulado real (suma de movimientos),
+    interés proyectado 0.04% anual, y total a entregar.
+    """
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+            COUNT(*)                        AS total_participantes,
+            COALESCE(SUM(c.capital_acumulado), 0)               AS total_acumulado,
+            COALESCE(SUM(c.capital_acumulado * 0.0004), 0)      AS total_interes,
+            COALESCE(SUM(c.capital_acumulado * 1.0004), 0)      AS total_a_entregar
+        FROM caja c;
+    """)
+    row = cur.fetchone()
+    conn.close()
+    return jsonify(dict(row))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
