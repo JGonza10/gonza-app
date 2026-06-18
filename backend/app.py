@@ -1364,15 +1364,20 @@ def enviar_correo_completo():
     alertas = cur.fetchall()
 
     if alertas:
-        filas_alertas = "".join([
-            f"<tr>"
-            f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['deudor_nombre']}</td>"
-            f"<td style='padding:6px 10px;border:1px solid #ddd'>${float(a['interes_mensual'] or 0):,.2f}</td>"
-            f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['proximo_corte']}</td>"
-            f"<td style='padding:6px 10px;border:1px solid #ddd'>{'Hoy' if a['dias_para_corte'] == 0 else f'En {a[\"dias_para_corte\"]} día(s)'}</td>"
-            f"</tr>"
-            for a in alertas
-        ])
+        filas_alertas_lista = []
+        for a in alertas:
+            dias_texto = "Hoy" if a["dias_para_corte"] == 0 else f"En {a['dias_para_corte']} día(s)"
+            interes_fmt = float(a["interes_mensual"] or 0)
+            fila = (
+                f"<tr>"
+                f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['deudor_nombre']}</td>"
+                f"<td style='padding:6px 10px;border:1px solid #ddd'>${interes_fmt:,.2f}</td>"
+                f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['proximo_corte']}</td>"
+                f"<td style='padding:6px 10px;border:1px solid #ddd'>{dias_texto}</td>"
+                f"</tr>"
+            )
+            filas_alertas_lista.append(fila)
+        filas_alertas = "".join(filas_alertas_lista)
         seccion_alertas = f"""
         <h3 style="color:#0B1F4B;border-left:4px solid #C9A84C;padding-left:10px">🔔 Alertas de réditos próximos ({len(alertas)})</h3>
         <table style="border-collapse:collapse;font-family:sans-serif;font-size:13px;margin-bottom:24px;width:100%">
