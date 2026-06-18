@@ -1009,30 +1009,22 @@ function ModConfiguracion() {
     finally { setSaving(false); }
   }
 
-  // Envía en un solo correo: alertas + informe ejecutivo + respaldo
+  // Envía UN SOLO correo con las 3 secciones: alertas + informe + respaldo adjunto
   async function handleEnviarCorreoCombinado() {
-    if (!window.confirm("¿Enviar correo completo ahora?\n\nIncluye:\n• Alertas de réditos\n• Informe ejecutivo\n• Respaldo en " + formatoBackup.toUpperCase())) return;
+    if (!window.confirm(
+      "¿Enviar correo completo ahora?\n\nUn solo correo con:\n• 🔔 Alertas de réditos\n• 📊 Informe ejecutivo\n• 💾 Respaldo en " + formatoBackup.toUpperCase()
+    )) return;
     setSavingCorreo(true);
     try {
-      // 1. Alertas
-      const resAlertas = await api("/api/alertas/enviar-correos", { method: "POST" });
-      // 2. Informe ejecutivo
-      const resInforme = await api("/api/resumen/informe", { method: "POST" });
-      // 3. Respaldo
-      const resBackup = await api("/api/backup/enviar", {
+      const res = await api("/api/correo/completo", {
         method: "POST",
         body: JSON.stringify({ formato: formatoBackup }),
       });
-
+      const errores = res.errores || [];
       const lineas = [
-        `✅ Alertas: ${resAlertas.enviados ?? 0} correo(s) enviado(s) · ${resAlertas.alertas ?? 0} alerta(s)`,
-        `✅ Informe ejecutivo: ${resInforme.enviados ?? 0} correo(s) enviado(s)`,
-        `✅ Respaldo (${formatoBackup.toUpperCase()}): ${resBackup.enviados ?? 0} correo(s) enviado(s)`,
-      ];
-      const errores = [
-        ...(resAlertas.errores || []),
-        ...(resInforme.errores || []),
-        ...(resBackup.errores || []),
+        `✅ Correo enviado a ${res.enviados ?? 0} destinatario(s)`,
+        `🔔 Alertas incluidas: ${res.alertas ?? 0}`,
+        `💾 Respaldo adjunto: ${(res.formato || formatoBackup).toUpperCase()}`,
       ];
       if (errores.length) lineas.push("⚠️ Errores: " + errores.join(", "));
       alert(lineas.join("\n"));
@@ -1072,7 +1064,7 @@ function ModConfiguracion() {
         <Card>
           <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: C.navy }}>📧 Envío de correos</p>
           <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford, lineHeight: 1.6 }}>
-            Envía en <b>un solo clic</b> el correo diario completo: alertas de réditos, informe ejecutivo y respaldo de la base de datos.
+            Los correos de alerta se envían automáticamente cada día a las <b>8:00 AM</b> (cron job). También puedes enviarlos manualmente ahora.
           </p>
 
           {/* Selector de formato del respaldo */}
@@ -1114,8 +1106,7 @@ function ModConfiguracion() {
           </div>
 
           <div style={{ background: C.goldLight, borderRadius: 8, padding: "8px 12px", marginTop: 12, fontSize: 11, color: "#8B6914" }}>
-            <b>Destinatarios:</b> usuarios con rol <b>administrador</b> o <b>analista</b> que tengan correo registrado.
-            Los correos también se envían automáticamente cada día a las <b>8:00 AM</b>.
+            <b>Destinatarios:</b> todos los usuarios con rol <b>administrador</b> o <b>analista</b> que tengan correo registrado en la base de datos.
           </div>
         </Card>
       </div>
