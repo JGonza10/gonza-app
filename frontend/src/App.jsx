@@ -772,7 +772,6 @@ function ModPagosPlazos() {
       </Card>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
         <Card>
-        <Card>
           <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Artículos ({plazos.length})</p>
           <Tabla
             headers={["Material","Costo","Meses","Pagados","Pendientes","Cuota","Abonado","Restante","Avance","Acciones"]}
