@@ -1331,6 +1331,167 @@ def reset_password():
     return jsonify({"mensaje": "Contraseña restablecida correctamente"})
 
 
+# ─── CORREO COMBINADO (alertas + informe + respaldo en un solo correo) ────────
+
+@app.route("/api/correo/completo", methods=["POST"])
+@requiere_cron
+def enviar_correo_completo():
+    """Genera y envía un único correo con 3 secciones:
+       1. Alertas de réditos próximos
+       2. Informe ejecutivo
+       3. Respaldo de BD como adjunto Excel (.xlsx)
+       Acepta body: {"formato": "xlsx" | "csv" | "sql"} (default: xlsx)
+    """
+    data = request.get_json(silent=True) or {}
+    formato = data.get("formato", "xlsx")
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # ── 1. Alertas ────────────────────────────────────────────────────────────
+    cur.execute("SELECT valor FROM configuracion WHERE clave = 'dias_anticipacion_alerta';")
+    row = cur.fetchone()
+    dias = int(row["valor"]) if row else 2
+
+    cur.execute("""
+        SELECT deudor_nombre, monto, interes_mensual,
+               proximo_corte::text AS proximo_corte,
+               (proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos
+        WHERE (proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY proximo_corte;
+    """, (dias,))
+    alertas = cur.fetchall()
+
+    if alertas:
+        filas_alertas = "".join([
+            f"<tr>"
+            f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['deudor_nombre']}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #ddd'>${float(a['interes_mensual'] or 0):,.2f}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['proximo_corte']}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #ddd'>{'Hoy' if a['dias_para_corte'] == 0 else f'En {a[\"dias_para_corte\"]} día(s)'}</td>"
+            f"</tr>"
+            for a in alertas
+        ])
+        seccion_alertas = f"""
+        <h3 style="color:#0B1F4B;border-left:4px solid #C9A84C;padding-left:10px">🔔 Alertas de réditos próximos ({len(alertas)})</h3>
+        <table style="border-collapse:collapse;font-family:sans-serif;font-size:13px;margin-bottom:24px;width:100%">
+          <tr style="background:#0B1F4B;color:#C9A84C">
+            <th style='padding:6px 10px;border:1px solid #ddd;text-align:left'>Deudor</th>
+            <th style='padding:6px 10px;border:1px solid #ddd;text-align:left'>Interés</th>
+            <th style='padding:6px 10px;border:1px solid #ddd;text-align:left'>Corte</th>
+            <th style='padding:6px 10px;border:1px solid #ddd;text-align:left'>Vence</th>
+          </tr>
+          {filas_alertas}
+        </table>
+        """
+    else:
+        seccion_alertas = """
+        <h3 style="color:#0B1F4B;border-left:4px solid #C9A84C;padding-left:10px">🔔 Alertas de réditos</h3>
+        <p style="color:#555;font-size:13px">✅ Sin alertas pendientes en los próximos días.</p>
+        """
+
+    # ── 2. Informe ejecutivo ──────────────────────────────────────────────────
+    cur.execute("SELECT * FROM v_resumen;")
+    resumen = cur.fetchone()
+
+    cur.execute("""
+        SELECT deudor_nombre, SUM(monto) AS total
+        FROM prestamos WHERE pagado = FALSE AND monto > 0
+        GROUP BY deudor_nombre ORDER BY total DESC LIMIT 5;
+    """)
+    top_deudores = cur.fetchall()
+    conn.close()
+
+    fmt_m = lambda v: f"${float(v or 0):,.2f}"
+
+    filas_top = "".join([
+        f"<tr>"
+        f"<td style='padding:6px 10px;border:1px solid #ddd'>{d['deudor_nombre']}</td>"
+        f"<td style='padding:6px 10px;border:1px solid #ddd'>{fmt_m(d['total'])}</td>"
+        f"</tr>"
+        for d in top_deudores
+    ])
+
+    seccion_informe = f"""
+    <h3 style="color:#0B1F4B;border-left:4px solid #C9A84C;padding-left:10px">📊 Informe ejecutivo</h3>
+    <table style="border-collapse:collapse;font-family:sans-serif;font-size:13px;margin-bottom:16px">
+      <tr><td style='padding:6px 10px;border:1px solid #ddd'>Cartera activa</td><td style='padding:6px 10px;border:1px solid #ddd'><b>{fmt_m(resumen['cartera_activa'])}</b></td></tr>
+      <tr><td style='padding:6px 10px;border:1px solid #ddd'>Capital caja de ahorro</td><td style='padding:6px 10px;border:1px solid #ddd'><b>{fmt_m(resumen['total_caja'])}</b></td></tr>
+      <tr><td style='padding:6px 10px;border:1px solid #ddd'>Total de ahorro</td><td style='padding:6px 10px;border:1px solid #ddd'><b>{fmt_m(resumen['total_ahorros'])}</b></td></tr>
+      <tr><td style='padding:6px 10px;border:1px solid #ddd'>Préstamos pendientes</td><td style='padding:6px 10px;border:1px solid #ddd'><b>{resumen['prestamos_pendientes']}</b></td></tr>
+      <tr><td style='padding:6px 10px;border:1px solid #ddd'>Préstamos pagados</td><td style='padding:6px 10px;border:1px solid #ddd'><b>{resumen['prestamos_cobrados']}</b></td></tr>
+    </table>
+    <h4 style="color:#0B1F4B">Top 5 deudores</h4>
+    <table style="border-collapse:collapse;font-family:sans-serif;font-size:13px;margin-bottom:24px">
+      <tr style="background:#0B1F4B;color:#C9A84C">
+        <th style='padding:6px 10px;border:1px solid #ddd;text-align:left'>Deudor</th>
+        <th style='padding:6px 10px;border:1px solid #ddd;text-align:left'>Monto</th>
+      </tr>
+      {filas_top}
+    </table>
+    """
+
+    # ── 3. Adjunto: respaldo ──────────────────────────────────────────────────
+    if formato == "csv":
+        adjuntos = generar_backup_csv()
+    elif formato == "sql":
+        adjuntos = generar_backup_sql()
+    else:
+        adjuntos = generar_backup_xlsx()
+        formato = "xlsx"
+
+    seccion_backup = f"""
+    <h3 style="color:#0B1F4B;border-left:4px solid #C9A84C;padding-left:10px">💾 Respaldo de base de datos</h3>
+    <p style="font-family:sans-serif;font-size:13px;color:#555">
+      Se adjunta el respaldo en formato <b>{formato.upper()}</b> generado hoy.
+    </p>
+    """
+
+    # ── Cuerpo final ──────────────────────────────────────────────────────────
+    from datetime import date
+    cuerpo = f"""
+    <div style="font-family:sans-serif;max-width:680px;margin:0 auto">
+      <div style="background:#0B1F4B;padding:18px 24px;border-radius:8px 8px 0 0">
+        <h2 style="color:#C9A84C;margin:0">Sistema GONZA</h2>
+        <p style="color:#8fa8c8;margin:4px 0 0;font-size:12px">Informe diario automático — {date.today().strftime('%d/%m/%Y')}</p>
+      </div>
+      <div style="background:#fff;padding:24px;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px">
+        {seccion_alertas}
+        {seccion_informe}
+        {seccion_backup}
+        <hr style="border:none;border-top:1px solid #eee;margin:20px 0"/>
+        <p style="font-size:11px;color:#aaa">Este correo fue generado automáticamente por el Sistema GONZA.</p>
+      </div>
+    </div>
+    """
+
+    destinatarios = get_destinatarios_admin()
+    if not destinatarios:
+        return jsonify({"mensaje": "Sin destinatarios con correo configurado"}), 200
+
+    enviados = 0
+    errores = []
+    for d in destinatarios:
+        try:
+            enviar_correo(
+                d["correo"],
+                f"GONZA — Informe diario {date.today().strftime('%d/%m/%Y')}",
+                cuerpo,
+                adjuntos=adjuntos
+            )
+            enviados += 1
+        except Exception as e:
+            errores.append(f"{d['correo']}: {str(e)}")
+
+    return jsonify({
+        "enviados": enviados,
+        "errores": errores,
+        "alertas": len(alertas),
+        "formato": formato
+    })
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
