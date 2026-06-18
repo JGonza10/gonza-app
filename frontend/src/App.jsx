@@ -595,7 +595,7 @@ function ModCaja() {
 
   const totalCapital = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
   const totalCuota = caja.reduce((a, c) => a + parseFloat(c.cuota || 0), 0);
-  const interesProyectado = totalCapital * 0.0004;
+  const interesProyectado = totalCapital * 0.04;
 
   async function handleAgregar() {
     if (!f.cliente_id) return alert("Selecciona un cliente");
