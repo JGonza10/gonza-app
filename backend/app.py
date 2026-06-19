@@ -13,6 +13,7 @@ CAMBIOS v2 (alineación con "Sistema de consulta de pagos"):
 import os
 import psycopg2
 import psycopg2.extras
+from datetime import date
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -231,7 +232,7 @@ def get_prestamos():
                (SELECT MAX(pp.fecha_pago) FROM pagos_prestamo pp
                  WHERE pp.prestamo_id = p.id AND pp.monto_capital > 0) AS fecha_abono_capital
         FROM prestamos p
-        ORDER BY p.fecha_prestamo DESC;
+        ORDER BY p.fecha_prestamo ASC;
     """)
     rows = cur.fetchall()
     conn.close()
@@ -383,7 +384,7 @@ def get_historial_prestamo(pid):
         FROM pagos_prestamo pp
         LEFT JOIN tipos_pago tp ON pp.tipo_pago_id = tp.id
         WHERE pp.prestamo_id = %s
-        ORDER BY pp.fecha_pago DESC, pp.id DESC;
+        ORDER BY pp.fecha_pago ASC, pp.id ASC;
     """, (pid,))
     rows = cur.fetchall()
     conn.close()
@@ -485,6 +486,10 @@ def get_ahorros():
 def add_ahorro():
     """Da de alta el registro de ahorro de un cliente (uno por cliente)."""
     data = request.get_json()
+
+    if "cliente_id" not in data:
+        return jsonify({"error": "Falta cliente_id"}), 400
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -495,7 +500,7 @@ def add_ahorro():
         """, (
             data["cliente_id"],
             data.get("cantidad", 0),
-            data.get("fecha"),
+            data.get("fecha") or date.today().isoformat(),
             data.get("nota", ""),
         ))
         nuevo_id = cur.fetchone()["id"]
@@ -504,6 +509,10 @@ def add_ahorro():
         conn.rollback()
         conn.close()
         return jsonify({"error": "Este cliente ya tiene un registro de ahorro"}), 400
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({"error": f"No se pudo registrar el ahorro: {str(e)}"}), 500
     conn.close()
     return jsonify({"id": nuevo_id}), 201
 
@@ -745,7 +754,7 @@ def get_mis_datos():
     cliente = cur.fetchone()
 
     cur.execute("""
-        SELECT * FROM prestamos WHERE cliente_id = %s ORDER BY fecha_prestamo DESC;
+        SELECT * FROM prestamos WHERE cliente_id = %s ORDER BY fecha_prestamo ASC;
     """, (cliente_id,))
     prestamos = cur.fetchall()
 
@@ -1218,6 +1227,14 @@ def add_movimiento_caja(cid):
         data.get("nota", ""),
     ))
     nuevo_id = cur.fetchone()["id"]
+
+    # Actualizar el capital acumulado del participante en la tabla caja
+    cur.execute("""
+        UPDATE caja
+        SET capital = capital + %s
+        WHERE id = %s;
+    """, (monto, cid))
+
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id, "mensaje": "Aportación registrada"}), 201
@@ -1226,16 +1243,19 @@ def add_movimiento_caja(cid):
 @app.route("/api/caja/<int:cid>/movimientos/<int:mid>", methods=["DELETE"])
 @requiere_rol("administrador")
 def delete_movimiento_caja(cid, mid):
-    """Elimina una aportación específica (solo administradores)."""
+    """Elimina una aportación específica (solo administradores) y descuenta el capital."""
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(
-        "DELETE FROM caja_movimientos WHERE id = %s AND caja_id = %s;",
-        (mid, cid)
-    )
-    if cur.rowcount == 0:
+
+    cur.execute("SELECT monto FROM caja_movimientos WHERE id = %s AND caja_id = %s;", (mid, cid))
+    mov = cur.fetchone()
+    if not mov:
         conn.close()
         return jsonify({"error": "Movimiento no encontrado"}), 404
+
+    cur.execute("DELETE FROM caja_movimientos WHERE id = %s AND caja_id = %s;", (mid, cid))
+    cur.execute("UPDATE caja SET capital = capital - %s WHERE id = %s;", (mov["monto"], cid))
+
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Movimiento eliminado"})
