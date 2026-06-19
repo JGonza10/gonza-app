@@ -653,8 +653,8 @@ def add_plazo():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO pagos_plazos (material, costo, meses_total, meses_pagados, cuota, abonado, nota, fecha)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO pagos_plazos (material, costo, meses_total, meses_pagados, cuota, abonado)
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING id;
     """, (
         data["material"],
@@ -663,8 +663,6 @@ def add_plazo():
         data.get("meses_pagados", 0),
         data.get("cuota"),
         data.get("abonado", 0),
-        data.get("nota", ""),
-        data.get("fecha"),
     ))
     nuevo_id = cur.fetchone()["id"]
     conn.commit()
@@ -1158,175 +1156,6 @@ def get_resumen():
 
 # ─── INICIO ───────────────────────────────────────────────────────────────────
 
-# ─── RUTAS: CORTES DE INTERÉS MENSUAL ────────────────────────────────────────
-
-def _generar_cortes_faltantes(cur, pid, interes_mensual, fecha_prestamo):
-    """
-    Genera automáticamente los cortes mensuales que faltan para un préstamo,
-    desde el mes siguiente a la fecha del préstamo hasta el mes actual.
-    No crea cortes para meses futuros.
-    """
-    from datetime import date
-    from dateutil.relativedelta import relativedelta
-
-    hoy = date.today()
-    # El primer corte es 1 mes después de la fecha del préstamo
-    primer_corte = (fecha_prestamo + relativedelta(months=1)).replace(day=1)
-    corte_actual = primer_corte
-
-    while corte_actual <= hoy.replace(day=1):
-        cur.execute("""
-            INSERT INTO cortes_interes (prestamo_id, periodo, monto_interes)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (prestamo_id, periodo) DO NOTHING;
-        """, (pid, corte_actual, interes_mensual))
-        corte_actual += relativedelta(months=1)
-
-
-@app.route("/api/prestamos/<int:pid>/cortes", methods=["GET"])
-@requiere_lectura("consultor")
-def get_cortes_interes(pid):
-    """
-    Devuelve todos los cortes de interés de un préstamo.
-    Genera automáticamente los cortes faltantes antes de responder.
-    """
-    conn = get_db()
-    cur = conn.cursor()
-
-    # Obtener datos del préstamo
-    cur.execute("SELECT fecha_prestamo, interes_mensual, pagado FROM prestamos WHERE id = %s;", (pid,))
-    prestamo = cur.fetchone()
-    if not prestamo:
-        conn.close()
-        return jsonify({"error": "Préstamo no encontrado"}), 404
-
-    # Solo generar cortes si el préstamo sigue activo
-    if not prestamo["pagado"] and prestamo["interes_mensual"] > 0:
-        _generar_cortes_faltantes(cur, pid, prestamo["interes_mensual"], prestamo["fecha_prestamo"])
-        conn.commit()
-
-    cur.execute("""
-        SELECT ci.id,
-               ci.periodo::text       AS periodo,
-               ci.monto_interes,
-               ci.pagado,
-               ci.fecha_pago::text    AS fecha_pago,
-               ci.monto_pagado,
-               ci.nota,
-               tp.nombre              AS tipo_pago
-        FROM cortes_interes ci
-        LEFT JOIN tipos_pago tp ON ci.tipo_pago_id = tp.id
-        WHERE ci.prestamo_id = %s
-        ORDER BY ci.periodo ASC;
-    """, (pid,))
-    rows = cur.fetchall()
-    conn.close()
-    return jsonify(list(rows))
-
-
-@app.route("/api/prestamos/<int:pid>/cortes/<int:cid>/pagar", methods=["PATCH"])
-@requiere_rol("administrador", "analista")
-def pagar_corte_interes(pid, cid):
-    """
-    Marca un corte de interés como pagado (total o parcial).
-    Body: { fecha_pago, monto_pagado, tipo_pago, nota }
-    Si monto_pagado < monto_interes → pago parcial (pagado=FALSE con monto registrado).
-    Si monto_pagado >= monto_interes → pagado=TRUE.
-    """
-    data = request.get_json()
-    monto_pagado = float(data.get("monto_pagado", 0))
-    fecha_pago = data.get("fecha_pago")
-    tipo_pago = data.get("tipo_pago", "transferencia")
-    nota = data.get("nota", "")
-
-    if monto_pagado <= 0:
-        return jsonify({"error": "El monto pagado debe ser mayor a 0"}), 400
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    # Verificar que el corte pertenece al préstamo
-    cur.execute("SELECT monto_interes FROM cortes_interes WHERE id = %s AND prestamo_id = %s;", (cid, pid))
-    corte = cur.fetchone()
-    if not corte:
-        conn.close()
-        return jsonify({"error": "Corte no encontrado"}), 404
-
-    monto_esperado = float(corte["monto_interes"])
-    es_pagado_completo = monto_pagado >= monto_esperado
-
-    cur.execute("""
-        UPDATE cortes_interes
-        SET pagado       = %s,
-            fecha_pago   = %s,
-            monto_pagado = monto_pagado + %s,
-            tipo_pago_id = (SELECT id FROM tipos_pago WHERE nombre = %s),
-            nota         = %s
-        WHERE id = %s AND prestamo_id = %s;
-    """, (es_pagado_completo, fecha_pago, monto_pagado, tipo_pago, nota, cid, pid))
-
-    conn.commit()
-    conn.close()
-    return jsonify({
-        "mensaje": "Corte marcado como pagado" if es_pagado_completo else "Abono parcial registrado",
-        "pagado": es_pagado_completo,
-    })
-
-
-@app.route("/api/prestamos/<int:pid>/cortes/<int:cid>/prorrogar", methods=["PATCH"])
-@requiere_rol("administrador", "analista")
-def prorrogar_corte(pid, cid):
-    """
-    Registra una prórroga: el interés no se cobró este mes.
-    Agrega una nota de prórroga al corte sin marcarlo como pagado.
-    """
-    data = request.get_json()
-    nota = data.get("nota", "PRÓRROGA — interés no cobrado este mes")
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE cortes_interes
-        SET nota = %s
-        WHERE id = %s AND prestamo_id = %s;
-    """, (nota, cid, pid))
-
-    if cur.rowcount == 0:
-        conn.close()
-        return jsonify({"error": "Corte no encontrado"}), 404
-
-    conn.commit()
-    conn.close()
-    return jsonify({"mensaje": "Prórroga registrada"})
-
-
-@app.route("/api/intereses-pendientes", methods=["GET"])
-@requiere_lectura("consultor")
-def get_resumen_intereses_pendientes():
-    """
-    Resumen global: todos los préstamos activos con sus intereses pendientes.
-    Primero genera cortes faltantes para todos los préstamos activos.
-    """
-    conn = get_db()
-    cur = conn.cursor()
-
-    # Generar cortes faltantes para TODOS los préstamos activos
-    cur.execute("""
-        SELECT id, fecha_prestamo, interes_mensual
-        FROM prestamos
-        WHERE pagado = FALSE AND interes_mensual > 0;
-    """)
-    prestamos = cur.fetchall()
-    for p in prestamos:
-        _generar_cortes_faltantes(cur, p["id"], p["interes_mensual"], p["fecha_prestamo"])
-    conn.commit()
-
-    cur.execute("SELECT * FROM v_intereses_pendientes;")
-    rows = cur.fetchall()
-    conn.close()
-    return jsonify(list(rows))
-
-
 # ─── RUTAS: MOVIMIENTOS DE CAJA ───────────────────────────────────────────────
 
 @app.route("/api/caja/<int:cid>/movimientos", methods=["GET"])
@@ -1503,7 +1332,7 @@ def reset_password():
 # ─── CORREO COMBINADO (alertas + informe + respaldo en un solo correo) ────────
 
 @app.route("/api/correo/completo", methods=["POST"])
-@requiere_cron
+@requiere_rol("administrador")
 def enviar_correo_completo():
     """Genera y envía un único correo con 3 secciones:
        1. Alertas de réditos próximos
@@ -1663,6 +1492,82 @@ def enviar_correo_completo():
         "errores": errores,
         "alertas": len(alertas),
         "formato": formato
+    })
+
+
+# ─── INFORME POR DEUDOR ───────────────────────────────────────────────────────
+
+@app.route("/api/informe-deudor/<path:nombre>", methods=["GET"])
+def get_informe_deudor(nombre):
+    """Informe ejecutivo completo de un deudor: préstamos, abonos, cortes de interés."""
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Todos los préstamos del deudor
+    cur.execute("""
+        SELECT p.id, p.deudor_nombre, p.fecha_prestamo::text, p.monto,
+               p.interes_mensual, p.pagado, p.fecha_pago::text, p.nota,
+               p.capital_abonado,
+               (p.monto - p.capital_abonado) AS saldo_capital,
+               tp.nombre AS tipo_pago
+        FROM prestamos p
+        LEFT JOIN tipos_pago tp ON p.tipo_pago_id = tp.id
+        WHERE LOWER(p.deudor_nombre) = LOWER(%s)
+        ORDER BY p.fecha_prestamo DESC;
+    """, (nombre,))
+    prestamos = [dict(r) for r in cur.fetchall()]
+
+    ids = [p["id"] for p in prestamos]
+
+    # Cortes de interés de todos sus préstamos
+    cortes = []
+    if ids:
+        cur.execute("""
+            SELECT ci.prestamo_id, ci.periodo::text, ci.monto_interes,
+                   ci.pagado, ci.fecha_pago::text, ci.monto_pagado, ci.nota,
+                   tp.nombre AS tipo_pago
+            FROM cortes_interes ci
+            LEFT JOIN tipos_pago tp ON ci.tipo_pago_id = tp.id
+            WHERE ci.prestamo_id = ANY(%s)
+            ORDER BY ci.periodo DESC;
+        """, (ids,))
+        cortes = [dict(r) for r in cur.fetchall()]
+
+    # Abonos de capital
+    abonos = []
+    if ids:
+        cur.execute("""
+            SELECT pp.prestamo_id, pp.fecha_pago::text, pp.monto_interes,
+                   pp.monto_capital, pp.nota, tp.nombre AS tipo_pago
+            FROM pagos_prestamo pp
+            LEFT JOIN tipos_pago tp ON pp.tipo_pago_id = tp.id
+            WHERE pp.prestamo_id = ANY(%s)
+            ORDER BY pp.fecha_pago DESC;
+        """, (ids,))
+        abonos = [dict(r) for r in cur.fetchall()]
+
+    conn.close()
+
+    # Totales
+    activos = [p for p in prestamos if not p["pagado"] and p["monto"] > 0]
+    total_prestado    = sum(float(p["monto"] or 0) for p in activos)
+    total_interes_mes = sum(float(p["interes_mensual"] or 0) for p in activos)
+    total_pendiente   = sum(float(c["monto_interes"] or 0) for c in cortes if not c["pagado"])
+    total_cobrado     = sum(float(c["monto_pagado"] or 0) for c in cortes)
+
+    return jsonify({
+        "deudor": nombre,
+        "prestamos": prestamos,
+        "cortes": cortes,
+        "abonos": abonos,
+        "resumen": {
+            "total_prestado": total_prestado,
+            "total_interes_mensual": total_interes_mes,
+            "interes_pendiente_acumulado": total_pendiente,
+            "interes_cobrado_total": total_cobrado,
+            "prestamos_activos": len(activos),
+            "prestamos_pagados": len([p for p in prestamos if p["pagado"]]),
+        }
     })
 
 
