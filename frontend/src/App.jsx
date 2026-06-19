@@ -245,202 +245,36 @@ function ModalAbono({ prestamo, onClose, onSaved }) {
   );
 }
 
-// ── MODAL: CORTES DE INTERÉS MENSUAL ─────────────────────────────────────────
-function ModalCortesInteres({ prestamo, onClose }) {
-  const { data: cortes, loading, reload } = useApiData(`/api/prestamos/${prestamo.id}/cortes`);
-  const [fechaPago, setFechaPago] = useState(today);
-  const [montoPagado, setMontoPagado] = useState("");
-  const [tipoPago, setTipoPago] = useState("transferencia");
-  const [nota, setNota] = useState("");
-  const [corteSeleccionado, setCorteSeleccionado] = useState(null);
-  const [saving, setSaving] = useState(false);
-
-  const pendientes = cortes.filter(c => !c.pagado);
-  const pagados    = cortes.filter(c =>  c.pagado);
-  const totalPendiente = pendientes.reduce((a, c) => a + parseFloat(c.monto_interes || 0), 0);
-  const totalCobrado   = cortes.reduce((a, c) => a + parseFloat(c.monto_pagado || 0), 0);
-
-  // Mes en formato legible: "2026-01-01" → "Enero 2026"
-  const fmtPeriodo = p => {
-    if (!p) return "—";
-    const [y, m] = p.toString().substring(0, 10).split("-");
-    const meses = ["","Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-    return `${meses[parseInt(m)]} ${y}`;
-  };
-
-  async function handlePagar() {
-    if (!corteSeleccionado) return alert("Selecciona un mes para pagar");
-    const mp = parseFloat(montoPagado || corteSeleccionado.monto_interes);
-    if (mp <= 0) return alert("Ingresa un monto válido");
-    setSaving(true);
-    try {
-      await api(`/api/prestamos/${prestamo.id}/cortes/${corteSeleccionado.id}/pagar`, {
-        method: "PATCH",
-        body: JSON.stringify({ fecha_pago: fechaPago, monto_pagado: mp, tipo_pago: tipoPago, nota }),
-      });
-      setCorteSeleccionado(null);
-      setMontoPagado("");
-      setNota("");
-      reload();
-    } catch (e) { alert("Error: " + e.message); }
-    finally { setSaving(false); }
-  }
-
-  async function handleProrrogar(corte) {
-    const notaPr = prompt("Nota de prórroga (opcional):", "PRÓRROGA — interés no cobrado") || "PRÓRROGA — interés no cobrado";
-    try {
-      await api(`/api/prestamos/${prestamo.id}/cortes/${corte.id}/prorrogar`, {
-        method: "PATCH",
-        body: JSON.stringify({ nota: notaPr }),
-      });
-      reload();
-    } catch (e) { alert("Error: " + e.message); }
-  }
-
-  return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", width: 620, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
-        {/* Encabezado */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-          <div>
-            <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.navy }}>📅 Intereses mensuales — {prestamo.deudor_nombre}</p>
-            <p style={{ margin: "3px 0 0", fontSize: 12, color: C.oxford }}>Monto: <b>{fmt(prestamo.monto)}</b> · Interés mensual: <b>{fmt(prestamo.interes_mensual)}</b></p>
-          </div>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 20, cursor: "pointer", color: C.oxford }}>✕</button>
-        </div>
-
-        {/* Resumen numérico */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 16 }}>
-          <div style={{ background: C.redLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Interés pendiente</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: C.red }}>{fmt(totalPendiente)}</p>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{pendientes.length} mes(es)</p>
-          </div>
-          <div style={{ background: C.greenLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Interés cobrado</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: C.green }}>{fmt(totalCobrado)}</p>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{pagados.length} mes(es)</p>
-          </div>
-          <div style={{ background: C.goldLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Total cortes</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: "#8B6914" }}>{cortes.length}</p>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>meses desde el préstamo</p>
-          </div>
-        </div>
-
-        {/* Panel de pago (si hay corte seleccionado) */}
-        {corteSeleccionado && (
-          <div style={{ background: C.lightGray, borderRadius: 10, padding: "12px 14px", marginBottom: 14, border: `1px solid ${C.gold}` }}>
-            <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: C.navy }}>
-              Registrar pago — {fmtPeriodo(corteSeleccionado.periodo)}
-              <span style={{ marginLeft: 8, color: C.oxford, fontWeight: 400 }}>Esperado: {fmt(corteSeleccionado.monto_interes)}</span>
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, alignItems: "end" }}>
-              <Inp label="Fecha de pago" type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}/>
-              <Inp label="Monto pagado ($)" type="number" value={montoPagado}
-                placeholder={String(corteSeleccionado.monto_interes)}
-                onChange={e => setMontoPagado(e.target.value)}/>
-              <div style={{ marginBottom: 9 }}>
-                <label style={{ display: "block", fontSize: 12, color: C.oxford, marginBottom: 3, fontWeight: 600 }}>Tipo de pago</label>
-                <select value={tipoPago} onChange={e => setTipoPago(e.target.value)}
-                  style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, color: C.navy, background: C.lightGray }}>
-                  <option value="transferencia">Transferencia</option>
-                  <option value="efectivo">Efectivo</option>
-                  <option value="cheque">Cheque</option>
-                </select>
-              </div>
-              <Inp label="Nota (opcional)" value={nota} onChange={e => setNota(e.target.value)} placeholder="Observaciones"/>
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Btn color={C.green} onClick={handlePagar} loading={saving}>✓ Registrar pago</Btn>
-              <Btn color={C.oxford} small onClick={() => setCorteSeleccionado(null)}>Cancelar</Btn>
-            </div>
-          </div>
-        )}
-
-        {/* Tabla de cortes */}
-        {loading ? <p style={{ fontSize: 12, color: C.oxford, textAlign: "center", padding: 16 }}>Cargando...</p> : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: C.navy }}>
-                {["Mes","Interés esperado","Estado","Pagado","Fecha pago","Nota","Acción"].map((h, i) =>
-                  <th key={i} style={{ color: C.gold, padding: "7px 8px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>)}
-              </tr></thead>
-              <tbody>
-                {cortes.length === 0
-                  ? <tr><td colSpan={7} style={{ textAlign: "center", padding: 16, color: C.oxford }}>Sin cortes generados aún</td></tr>
-                  : cortes.map((c, i) => {
-                      const esPendiente = !c.pagado;
-                      const tieneProroga = !c.pagado && c.nota && c.nota.includes("PRÓRROGA");
-                      const bgRow = c.pagado ? C.greenLight : (tieneProroga ? C.goldLight : (i % 2 === 0 ? C.white : C.lightGray));
-                      return (
-                        <tr key={c.id} style={{ background: bgRow }}>
-                          <td style={{ padding: "6px 8px", fontWeight: 700, color: C.navy, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>
-                            {fmtPeriodo(c.periodo)}
-                          </td>
-                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(c.monto_interes)}</td>
-                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>
-                            {c.pagado
-                              ? <Badge color={C.green} bg={C.greenLight}>✓ Pagado</Badge>
-                              : tieneProroga
-                                ? <Badge color="#8B6914" bg={C.goldLight}>⏸ Prórroga</Badge>
-                                : <Badge color={C.red} bg={C.redLight}>⚠ Pendiente</Badge>}
-                          </td>
-                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, color: c.pagado ? C.green : C.oxford }}>
-                            {c.monto_pagado > 0 ? fmt(c.monto_pagado) : "—"}
-                          </td>
-                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>
-                            {fmtFecha(c.fecha_pago)}
-                          </td>
-                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {c.nota || "—"}
-                          </td>
-                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>
-                            {esPendiente && (
-                              <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
-                                <Btn small color={C.green} onClick={() => { setCorteSeleccionado(c); setMontoPagado(String(c.monto_interes)); }}>
-                                  $ Cobrar
-                                </Btn>
-                                <Btn small color="#8B6914" onClick={() => handleProrrogar(c)}>
-                                  ⏸
-                                </Btn>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                }
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function ModPrestamos() {
   const { data: prestamos, loading, reload } = useApiData("/api/prestamos");
   const { data: clientes } = useApiData("/api/clientes");
+  const { data: resumenIntereses, reload: reloadIntereses } = useApiData("/api/intereses-pendientes");
   const [f, setF] = useState({ cliente_id: "", fecha_prestamo: today, monto: "", nota: "" });
   const [saving, setSaving] = useState(false);
   const [abonoPrestamo, setAbonoPrestamo] = useState(null);
   const [cortesPrestamoModal, setCortesPrestamoModal] = useState(null);
   const [ordenFecha, setOrdenFecha] = useState("desc");
-  const [busqueda, setBusqueda] = useState("");   // ← NUEVO: filtro de búsqueda
+  const [busqueda, setBusqueda] = useState("");
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
-  const activosFiltrados = [...prestamos.filter(p => !p.pagado && p.monto > 0)]
+  const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
+  const pagados = prestamos.filter(p => p.pagado);
+  const totalCartera = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
+  const totalInteresesEsperados = activos.filter(p => parseFloat(p.interes_mensual||0) > 0)
+    .reduce((a, p) => a + parseFloat(p.interes_mensual || 0), 0);
+  const totalInteresesNoCobrados = resumenIntereses
+    .reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
+
+  // Mapa: prestamo_id → cortes pendientes (para badge)
+  const pendientesPorPrestamo = {};
+  resumenIntereses.forEach(r => { if (r.cortes_pendientes > 0) pendientesPorPrestamo[r.prestamo_id] = r.cortes_pendientes; });
+
+  const activosFiltrados = [...activos]
     .filter(p => !busqueda || p.deudor_nombre.toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => {
       const diff = new Date(a.fecha_prestamo) - new Date(b.fecha_prestamo);
       return ordenFecha === "asc" ? diff : -diff;
     });
-  const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
-  const pagados = prestamos.filter(p => p.pagado);
-  const totalCartera = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
-  const totalIntereses = activos.reduce((a, p) => a + parseFloat(p.interes_mensual || 0), 0);
 
   async function handleAgregar() {
     if (!f.cliente_id || !f.monto) return alert("Cliente y monto requeridos");
@@ -478,12 +312,27 @@ function ModPrestamos() {
   return (
     <div>
       <SectionTitle>Préstamos</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 14 }}>
-        {[
-          { l: "Cartera activa", v: fmt(totalCartera), c: C.navy, bg: C.navyLight },
-          { l: "Intereses esperados (mes)", v: fmt(totalIntereses), c: "#8B6914", bg: C.goldLight },
-          { l: "Préstamos pagados", v: pagados.length, c: C.green, bg: C.greenLight },
-        ].map((s2, i) => <Card key={i} style={{ background: s2.bg }}><p style={{ margin: 0, fontSize: 11, color: C.oxford }}>{s2.l}</p><p style={{ margin: "2px 0 0", fontSize: 20, fontWeight: 700, color: s2.c }}>{s2.v}</p></Card>)}
+
+      {/* Tarjetas de resumen — 4 tarjetas con etiquetas correctas */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 14 }}>
+        <Card style={{ background: C.navyLight }}>
+          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Cartera activa</p>
+          <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: C.navy }}>{fmt(totalCartera)}</p>
+        </Card>
+        <Card style={{ background: C.goldLight }}>
+          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Interés esperado / mes</p>
+          <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: "#8B6914" }}>{fmt(totalInteresesEsperados)}</p>
+          <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>suma de tasas pactadas</p>
+        </Card>
+        <Card style={{ background: C.redLight }}>
+          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Intereses no cobrados</p>
+          <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: C.red }}>{fmt(totalInteresesNoCobrados)}</p>
+          <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>acumulado histórico pendiente</p>
+        </Card>
+        <Card style={{ background: C.greenLight }}>
+          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Préstamos pagados</p>
+          <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: C.green }}>{pagados.length}</p>
+        </Card>
       </div>
 
       {/* Formulario horizontal */}
@@ -502,45 +351,43 @@ function ModPrestamos() {
           </div>
         </div>
         {f.monto && <div style={{ background: C.goldLight, borderRadius: 8, padding: "7px 10px", fontSize: 12, marginTop: -4 }}>
-          Interés (10%): <b>{fmt(parseFloat(f.monto) * 0.10)}</b>
+          Interés (10%): <b>{fmt(parseFloat(f.monto) * 0.10)}</b> / mes
         </div>}
       </Card>
 
       <Card style={{ marginBottom: 16 }}>
-        {/* Barra de controles: búsqueda + orden */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
           <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.oxford }}>
             Préstamos activos ({activosFiltrados.length}{busqueda ? ` de ${activos.length}` : ""})
           </p>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            {/* Búsqueda */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <div style={{ position: "relative" }}>
-              <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: C.oxford }}>🔍</span>
-              <input
-                value={busqueda}
-                onChange={e => setBusqueda(e.target.value)}
-                placeholder="Buscar deudor..."
-                style={{ paddingLeft: 28, paddingRight: 10, paddingTop: 6, paddingBottom: 6, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.navy, background: C.lightGray, width: 180 }}
-              />
+              <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", fontSize: 13 }}>🔍</span>
+              <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar deudor..."
+                style={{ paddingLeft: 28, paddingRight: 28, paddingTop: 6, paddingBottom: 6, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.navy, background: C.lightGray, width: 180 }}/>
               {busqueda && <button onClick={() => setBusqueda("")} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", fontSize: 14, color: C.oxford }}>✕</button>}
             </div>
-            {/* Orden */}
             <button onClick={() => setOrdenFecha(o => o === "asc" ? "desc" : "asc")}
               style={{ display: "flex", alignItems: "center", gap: 5, background: C.navyLight, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, color: C.navy, fontWeight: 700, cursor: "pointer" }}>
               📅 {ordenFecha === "asc" ? "↑ Más antiguo" : "↓ Más reciente"}
             </button>
           </div>
         </div>
-
         <Tabla
-          headers={["#", "Deudor", "Fecha", "Monto", "Interés/mes", "Capital abonado", "Saldo", "Nota", "Acciones"]}
+          headers={["#", "Deudor", "Fecha", "Monto", "Interés/mes", "Capital abonado", "Saldo", "Estado interés", "Nota", "Acciones"]}
           rows={activosFiltrados.map(p => {
             const saldo = parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0);
+            const mesesPendientes = pendientesPorPrestamo[p.id] || 0;
             return [
               p.id, p.deudor_nombre,
               fmtFecha(p.fecha_prestamo),
               fmt(p.monto), fmt(p.interes_mensual), fmt(p.capital_abonado || 0),
               <b key={`s${p.id}`} style={{ color: saldo <= 0 ? C.green : C.orange }}>{fmt(saldo)}</b>,
+              mesesPendientes > 0
+                ? <Badge key={`ip${p.id}`} color={C.red} bg={C.redLight}>⚠ {mesesPendientes} mes(es) pendiente{mesesPendientes > 1 ? "s" : ""}</Badge>
+                : parseFloat(p.interes_mensual||0) > 0
+                  ? <Badge key={`io${p.id}`} color={C.green} bg={C.greenLight}>✓ Al día</Badge>
+                  : <Badge key={`in${p.id}`} color={C.oxford} bg={C.lightGray}>Sin interés</Badge>,
               p.nota || "—",
               <div key={`acc${p.id}`} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                 <Btn small color="#6B46C1" onClick={() => setCortesPrestamoModal(p)}>📅 Intereses</Btn>
@@ -564,7 +411,7 @@ function ModPrestamos() {
         <ModalAbono prestamo={abonoPrestamo} onClose={() => setAbonoPrestamo(null)} onSaved={() => { setAbonoPrestamo(null); reload(); }}/>
       )}
       {cortesPrestamoModal && (
-        <ModalCortesInteres prestamo={cortesPrestamoModal} onClose={() => { setCortesPrestamoModal(null); reload(); }}/>
+        <ModalCortesInteres prestamo={cortesPrestamoModal} onClose={() => { setCortesPrestamoModal(null); reload(); reloadIntereses(); }}/>
       )}
     </div>
   );
@@ -842,7 +689,7 @@ function ModCaja() {
           <p style={{ margin: "2px 0 0", fontSize: 22, fontWeight: 700, color: "#8B6914" }}>{fmt(totalCuota)}</p>
         </Card>
         <Card style={{ background: C.greenLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Interés anual proyectado (0.04%)</p>
+          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Interés anual proyectado (4%)</p>
           <p style={{ margin: "2px 0 0", fontSize: 22, fontWeight: 700, color: C.green }}>{fmt(interesProyectado)}</p>
         </Card>
       </div>
@@ -919,6 +766,18 @@ function ModPagosPlazos() {
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState(null);
   const [editF, setEditF] = useState({});
+
+  // Calcula cuota automáticamente al cambiar costo o meses
+  function handleCostoChange(e) {
+    const costo = e.target.value;
+    const cuotaAuto = costo && f.meses_total ? (parseFloat(costo) / parseInt(f.meses_total)).toFixed(2) : "";
+    setF(x => ({ ...x, costo, cuota: cuotaAuto }));
+  }
+  function handleMesesChange(e) {
+    const meses = e.target.value;
+    const cuotaAuto = f.costo && meses ? (parseFloat(f.costo) / parseInt(meses)).toFixed(2) : "";
+    setF(x => ({ ...x, meses_total: meses, cuota: cuotaAuto }));
+  }
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   async function handleAbonar(pid) {
@@ -964,11 +823,20 @@ function ModPagosPlazos() {
         <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Agregar artículo</p>
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
           <Inp label="Material / Artículo" value={f.material} onChange={s("material")} placeholder="Ej. Refrigerador"/>
-          <Inp label="Costo total ($)" type="number" value={f.costo} onChange={s("costo")}/>
-          <Inp label="Meses totales" type="number" value={f.meses_total} onChange={s("meses_total")}/>
-          <Inp label="Cuota mensual ($)" type="number" value={f.cuota} onChange={s("cuota")}/>
+          <Inp label="Costo total ($)" type="number" value={f.costo} onChange={handleCostoChange}/>
+          <Inp label="Meses totales" type="number" value={f.meses_total} onChange={handleMesesChange}/>
+          <div style={{ marginBottom: 9 }}>
+            <label style={{ display: "block", fontSize: 12, color: C.oxford, marginBottom: 3, fontWeight: 600 }}>Cuota mensual ($)</label>
+            <input type="number" value={f.cuota} onChange={s("cuota")}
+              style={{ width: "100%", padding: "7px 10px", border: `2px solid ${C.gold}`, borderRadius: 8, fontSize: 13, color: C.navy, background: C.goldLight, boxSizing: "border-box", fontWeight: 700 }}/>
+          </div>
           <div style={{ marginBottom: 9 }}><Btn onClick={handleAgregar} loading={saving}>Agregar</Btn></div>
         </div>
+        {f.costo && f.meses_total && (
+          <div style={{ background: C.goldLight, borderRadius: 8, padding: "7px 10px", fontSize: 12, marginTop: -4 }}>
+            Cuota calculada: <b>{fmt(parseFloat(f.costo) / parseInt(f.meses_total))}</b> / mes
+          </div>
+        )}
       </Card>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
         <Card>
@@ -1015,80 +883,272 @@ function ModPagosPlazos() {
   );
 }
 
+// ── MODAL: INFORME POR DEUDOR ─────────────────────────────────────────────────
+function ModalInformeDeudor({ nombre, onClose }) {
+  const { data, loading, error } = useApiData(`/api/informe-deudor/${encodeURIComponent(nombre)}`);
+
+  const fmtPeriodo = p => {
+    if (!p) return "—";
+    const [y, m] = p.toString().substring(0, 10).split("-");
+    const meses = ["","Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+    return `${meses[parseInt(m)]} ${y}`;
+  };
+
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
+      <div style={{ background: C.white, borderRadius: 14, padding: "22px 26px", width: 700, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,.22)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 16, fontWeight: 800, color: C.navy }}>📋 Informe de deudor</p>
+            <p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 700, color: C.orange }}>{nombre}</p>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: C.oxford }}>✕</button>
+        </div>
+
+        {loading && <p style={{ textAlign: "center", padding: 24, color: C.oxford }}>Cargando informe...</p>}
+        {error && <p style={{ color: C.red }}>Error: {error}</p>}
+        {data && data.resumen && (
+          <>
+            {/* Resumen numérico */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 18 }}>
+              {[
+                { l: "Capital prestado activo", v: fmt(data.resumen.total_prestado), c: C.navy, bg: C.navyLight },
+                { l: "Interés pendiente acumulado", v: fmt(data.resumen.interes_pendiente_acumulado), c: C.red, bg: C.redLight },
+                { l: "Interés cobrado total", v: fmt(data.resumen.interes_cobrado_total), c: C.green, bg: C.greenLight },
+              ].map((s, i) => (
+                <div key={i} style={{ background: s.bg, borderRadius: 10, padding: "10px 12px" }}>
+                  <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{s.l}</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 15, fontWeight: 700, color: s.c }}>{s.v}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Préstamos */}
+            <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>
+              Préstamos ({data.prestamos.length})
+            </p>
+            <div style={{ overflowX: "auto", marginBottom: 16 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: C.navy }}>
+                  {["Fecha","Monto","Interés/mes","Saldo","Estado","Nota"].map((h,i) =>
+                    <th key={i} style={{ color: C.gold, padding: "6px 8px", textAlign: "left" }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {data.prestamos.map((p, i) => {
+                    const saldo = parseFloat(p.monto||0) - parseFloat(p.capital_abonado||0);
+                    return (
+                      <tr key={p.id} style={{ background: i%2===0 ? C.white : C.lightGray }}>
+                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmtFecha(p.fecha_prestamo)}</td>
+                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(p.monto)}</td>
+                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(p.interes_mensual)}</td>
+                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontWeight: 700, color: saldo > 0 ? C.orange : C.green }}>{fmt(saldo)}</td>
+                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
+                          {p.pagado
+                            ? <Badge color={C.green} bg={C.greenLight}>✓ Pagado</Badge>
+                            : <Badge color={C.orange} bg={C.orangeLight}>Activo</Badge>}
+                        </td>
+                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{p.nota || "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Cortes de interés */}
+            {data.cortes.length > 0 && (
+              <>
+                <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>
+                  Historial de intereses ({data.cortes.length} cortes)
+                </p>
+                <div style={{ overflowX: "auto", marginBottom: 16 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ background: C.navy }}>
+                      {["Mes","Interés","Estado","Pagado","Fecha pago"].map((h,i) =>
+                        <th key={i} style={{ color: C.gold, padding: "6px 8px", textAlign: "left" }}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {data.cortes.slice(0, 24).map((c, i) => (
+                        <tr key={i} style={{ background: c.pagado ? C.greenLight : (i%2===0 ? C.white : C.lightGray) }}>
+                          <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontWeight: 700 }}>{fmtPeriodo(c.periodo)}</td>
+                          <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(c.monto_interes)}</td>
+                          <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
+                            {c.pagado
+                              ? <Badge color={C.green} bg={C.greenLight}>✓ Cobrado</Badge>
+                              : <Badge color={C.red} bg={C.redLight}>⚠ Pendiente</Badge>}
+                          </td>
+                          <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, color: C.green }}>{c.monto_pagado > 0 ? fmt(c.monto_pagado) : "—"}</td>
+                          <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmtFecha(c.fecha_pago)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── MÓDULO: RESUMEN ───────────────────────────────────────────────────────────
 function ModResumen({ irA }) {
   const { data: prestamos, loading: lp } = useApiData("/api/prestamos");
-  const { data: ahorros, loading: la } = useApiData("/api/ahorros");
-  const { data: caja, loading: lc } = useApiData("/api/caja");
+  const { data: ahorros,   loading: la } = useApiData("/api/ahorros");
+  const { data: caja,      loading: lc } = useApiData("/api/caja");
+  const { data: resumenIntereses }       = useApiData("/api/intereses-pendientes");
+  const [deudorModal, setDeudorModal] = useState(null);
 
   if (lp || la || lc) return <p style={{ padding: 20, color: C.oxford }}>Cargando resumen...</p>;
 
   const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
-  const totalCartera = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
-  const totalIntereses = activos.reduce((a, p) => a + parseFloat(p.interes_mensual || 0), 0);
-  const totalAhorros = ahorros.reduce((a, x) => a + parseFloat(x.cantidad || 0), 0);
-  const totalCaja = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
+  const totalCartera        = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
+  const totalInteresEsperado= activos.filter(p => parseFloat(p.interes_mensual||0) > 0)
+                                .reduce((a, p) => a + parseFloat(p.interes_mensual || 0), 0);
+  const totalInteresNoCobrado = resumenIntereses.reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
+  const totalAhorros        = ahorros.reduce((a, x) => a + parseFloat(x.cantidad || 0), 0);
+  const totalCaja           = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
+  const interesAnualCaja    = totalCaja * 0.04;
 
+  // Top deudores por capital activo
   const porDeudor = {};
   activos.forEach(p => { porDeudor[p.deudor_nombre] = (porDeudor[p.deudor_nombre] || 0) + parseFloat(p.monto); });
   const topDeudores = Object.entries(porDeudor).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  // Datos para gráfica de distribución (pie)
   const datosDistribucion = [
-    { name: "Cartera activa", value: totalCartera, color: C.navy },
-    { name: "Ahorros", value: totalAhorros, color: C.green },
-    { name: "Caja", value: totalCaja, color: C.orange },
+    { name: "Cartera activa", value: totalCartera,  color: C.navy },
+    { name: "Ahorros grupo",  value: totalAhorros,  color: C.green },
+    { name: "Caja de ahorro", value: totalCaja,     color: C.orange },
   ].filter(d => d.value > 0);
-  const datosBarras = topDeudores.map(([nombre, monto]) => ({ nombre, monto }));
+
+  // Datos para gráfica de intereses (donut)
+  const datosIntereses = [
+    { name: "Cobrado", value: resumenIntereses.reduce((a,r) => a + parseFloat(r.total_interes_cobrado||0), 0), color: C.green },
+    { name: "Pendiente", value: totalInteresNoCobrado, color: C.red },
+  ].filter(d => d.value > 0);
+
+  const RADIAN = Math.PI / 180;
+  const renderLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }) => {
+    if (percent < 0.05) return null;
+    const r = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const x = cx + r * Math.cos(-midAngle * RADIAN);
+    const y = cy + r * Math.sin(-midAngle * RADIAN);
+    return <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700}>{`${(percent*100).toFixed(0)}%`}</text>;
+  };
 
   return (
     <div>
       <SectionTitle>Resumen ejecutivo — GONZA</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12, marginBottom: 16 }}>
+
+      {/* Tarjetas principales — 6 con etiquetas correctas */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
         {[
-          { l: "Cartera activa prestada", v: fmt(totalCartera), c: C.navy, bg: C.navyLight, i: "💼", sec: "prestamos" },
-          { l: "Intereses por cobrar (mensual)", v: fmt(totalIntereses), c: "#8B6914", bg: C.goldLight, i: "📊", sec: "prestamos" },
-          { l: "Total ahorros del grupo", v: fmt(totalAhorros), c: C.green, bg: C.greenLight, i: "🏦", sec: "ahorro" },
-          { l: "Capital caja de ahorro", v: fmt(totalCaja), c: C.orange, bg: C.orangeLight, i: "💰", sec: "caja" },
+          { l: "Cartera activa prestada",       v: fmt(totalCartera),          c: C.navy,    bg: C.navyLight,   i: "💼", sec: "prestamos" },
+          { l: "Interés esperado / mes",         v: fmt(totalInteresEsperado),  c: "#8B6914", bg: C.goldLight,   i: "📊", sec: "prestamos",
+            sub: "suma de tasas pactadas" },
+          { l: "Intereses no cobrados (total)",  v: fmt(totalInteresNoCobrado), c: C.red,     bg: C.redLight,    i: "⚠️", sec: "prestamos",
+            sub: "acumulado histórico pendiente" },
+          { l: "Ahorro total del grupo",         v: fmt(totalAhorros),          c: C.green,   bg: C.greenLight,  i: "🏦", sec: "ahorro" },
+          { l: "Capital caja de ahorro",         v: fmt(totalCaja),             c: C.orange,  bg: C.orangeLight, i: "💰", sec: "caja" },
+          { l: "Interés anual proyectado (4%)",  v: fmt(interesAnualCaja),      c: "#166534", bg: C.greenLight,  i: "📈", sec: "caja",
+            sub: "sobre el capital de caja" },
         ].map((s, i) => (
           <Card key={i} onClick={() => irA(s.sec)} style={{ background: s.bg, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
-            <span style={{ fontSize: 28 }}>{s.i}</span>
+            <span style={{ fontSize: 26 }}>{s.i}</span>
             <div>
-              <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>{s.l}</p>
-              <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: s.c }}>{s.v}</p>
+              <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{s.l}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 17, fontWeight: 700, color: s.c }}>{s.v}</p>
+              {s.sub && <p style={{ margin: 0, fontSize: 9, color: C.oxford }}>{s.sub}</p>}
             </div>
           </Card>
         ))}
       </div>
+
+      {/* Gráficas */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+
+        {/* Distribución del capital — Pie con etiquetas internas */}
         <Card>
-          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Distribución del capital</p>
-          <ResponsiveContainer width="100%" height={220}>
+          <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Distribución del capital del grupo</p>
+          <p style={{ margin: "0 0 8px", fontSize: 10, color: C.oxford }}>Cartera activa vs Ahorros vs Caja</p>
+          <ResponsiveContainer width="100%" height={230}>
             <PieChart>
-              <Pie data={datosDistribucion} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`}>
+              <Pie data={datosDistribucion} dataKey="value" nameKey="name"
+                cx="50%" cy="50%" outerRadius={90} labelLine={false} label={renderLabel}>
                 {datosDistribucion.map((d, i) => <Cell key={i} fill={d.color}/>)}
               </Pie>
               <Tooltip formatter={v => fmt(v)}/>
+              <Legend formatter={(v, e) => `${v}: ${fmt(e.payload.value)}`}/>
             </PieChart>
           </ResponsiveContainer>
         </Card>
+
+        {/* Intereses: cobrados vs pendientes — Donut */}
         <Card>
-          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Top 5 deudores</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={datosBarras} layout="vertical" margin={{ left: 10 }}>
-              <XAxis type="number" tickFormatter={v => fmt(v)} fontSize={10}/>
-              <YAxis type="category" dataKey="nombre" width={90} fontSize={10}/>
+          <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Estado de intereses</p>
+          <p style={{ margin: "0 0 8px", fontSize: 10, color: C.oxford }}>Cobrado vs pendiente acumulado histórico</p>
+          <ResponsiveContainer width="100%" height={230}>
+            <PieChart>
+              <Pie data={datosIntereses} dataKey="value" nameKey="name"
+                cx="50%" cy="50%" innerRadius={55} outerRadius={90} labelLine={false} label={renderLabel}>
+                {datosIntereses.map((d, i) => <Cell key={i} fill={d.color}/>)}
+              </Pie>
               <Tooltip formatter={v => fmt(v)}/>
-              <Bar dataKey="monto" fill={C.orange} radius={[0,6,6,0]} cursor="pointer" onClick={() => irA("prestamos")}/>
-            </BarChart>
+              <Legend formatter={(v, e) => `${v}: ${fmt(e.payload.value)}`}/>
+            </PieChart>
           </ResponsiveContainer>
+          <div style={{ textAlign: "center", marginTop: -8 }}>
+            <span style={{ fontSize: 11, color: C.oxford }}>Total intereses: </span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>
+              {fmt(datosIntereses.reduce((a,d) => a + d.value, 0))}
+            </span>
+          </div>
         </Card>
       </div>
+
+      {/* Ranking de deudores + indicadores */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <Card>
+          <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Ranking de deudores</p>
+          <p style={{ margin: "0 0 12px", fontSize: 10, color: C.oxford }}>Haz clic en un nombre para ver su informe individual</p>
+          {topDeudores.map(([nombre, monto], i) => {
+            const maxM = topDeudores[0][1] || 1;
+            // Interés pendiente de este deudor
+            const pendiente = resumenIntereses
+              .filter(r => r.deudor_nombre === nombre)
+              .reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
+            return (
+              <div key={nombre} style={{ marginBottom: 12, cursor: "pointer", borderRadius: 8, padding: "8px 10px", background: C.lightGray, border: `1px solid ${C.border}` }}
+                onClick={() => setDeudorModal(nombre)}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 700, color: C.navy }}>{i+1}. {nombre}</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ fontWeight: 700, color: C.navy }}>{fmt(monto)}</span>
+                    {pendiente > 0 && <Badge color={C.red} bg={C.redLight}>⚠ {fmt(pendiente)}</Badge>}
+                  </div>
+                </div>
+                <div style={{ background: C.border, borderRadius: 6, height: 8 }}>
+                  <div style={{ background: i===0 ? C.orange : C.navy, width: `${(monto/maxM)*100}%`, height: 8, borderRadius: 6, transition: "width .3s" }}/>
+                </div>
+                <p style={{ margin: "4px 0 0", fontSize: 10, color: C.oxford }}>👆 Clic para ver informe completo</p>
+              </div>
+            );
+          })}
+        </Card>
+
         <Card onClick={() => irA("prestamos")} style={{ cursor: "pointer" }}>
           <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Indicadores generales</p>
           {[
-            ["Préstamos activos", activos.length, C.orange],
-            ["Préstamos pagados", prestamos.filter(p => p.pagado).length, C.green],
-            ["Participantes caja", caja.length, C.navy],
+            ["Préstamos activos",         activos.length,                            C.orange],
+            ["Préstamos pagados",         prestamos.filter(p => p.pagado).length,   C.green],
+            ["Participantes caja ahorro", caja.length,                              C.navy],
+            ["Socios con ahorro",         ahorros.length,                           C.navy],
+            ["Interés esperado / mes",    fmt(totalInteresEsperado),                "#8B6914"],
+            ["Intereses no cobrados",     fmt(totalInteresNoCobrado),               C.red],
+            ["Capital total del grupo",   fmt(totalCartera + totalAhorros + totalCaja), C.navy],
           ].map(([l, v, c]) => (
             <div key={l} style={{ display: "flex", justifyContent: "space-between", borderBottom: `1px solid ${C.border}`, padding: "6px 0", fontSize: 12 }}>
               <span style={{ color: C.oxford }}>{l}</span>
@@ -1096,24 +1156,11 @@ function ModResumen({ irA }) {
             </div>
           ))}
         </Card>
-        <Card>
-          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Ranking de deudores</p>
-          {topDeudores.map(([nombre, monto], i) => {
-            const maxM = topDeudores[0][1] || 1;
-            return (
-              <div key={nombre} style={{ marginBottom: 10, cursor: "pointer" }} onClick={() => irA("prestamos")}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-                  <span style={{ color: C.oxford }}>{i+1}. {nombre}</span>
-                  <span style={{ fontWeight: 700, color: C.navy }}>{fmt(monto)}</span>
-                </div>
-                <div style={{ background: C.border, borderRadius: 6, height: 7 }}>
-                  <div style={{ background: i===0?C.orange:C.navy, width: `${(monto/maxM)*100}%`, height: 7, borderRadius: 6 }}/>
-                </div>
-              </div>
-            );
-          })}
-        </Card>
       </div>
+
+      {deudorModal && (
+        <ModalInformeDeudor nombre={deudorModal} onClose={() => setDeudorModal(null)}/>
+      )}
     </div>
   );
 }
