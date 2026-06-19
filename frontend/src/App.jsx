@@ -519,6 +519,8 @@ function ModalMovimientosCaja({ participante, onClose }) {
   const [monto, setMonto] = useState(participante.cuota || "");
   const [nota, setNota] = useState("");
   const [saving, setSaving] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editF, setEditF] = useState({});
 
   const totalAportado = movimientos.reduce((a, m) => a + parseFloat(m.monto || 0), 0);
   const interes = totalAportado * 0.04;
@@ -535,6 +537,24 @@ function ModalMovimientosCaja({ participante, onClose }) {
       setNota(""); reload();
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
+  }
+
+  async function guardarEdicionMov(mid) {
+    try {
+      await api(`/api/caja/${participante.id}/movimientos/${mid}`, {
+        method: "PATCH",
+        body: JSON.stringify({ fecha: editF.fecha, monto: parseFloat(editF.monto || 0), nota: editF.nota }),
+      });
+      setEditId(null); reload();
+    } catch (e) { alert("Error: " + e.message); }
+  }
+
+  async function handleBorrarMov(mid) {
+    if (!window.confirm("¿Eliminar esta aportación? El capital se recalculará automáticamente.")) return;
+    try {
+      await api(`/api/caja/${participante.id}/movimientos/${mid}`, { method: "DELETE" });
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
   }
 
   return (
@@ -575,25 +595,56 @@ function ModalMovimientosCaja({ participante, onClose }) {
           : <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: C.navy }}>
-                  {["#","Fecha","Monto","Acumulado","Nota"].map((h,i) => <th key={i} style={{ color: C.gold, padding: "6px 8px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>)}
+                  {["#","Fecha","Monto","Acumulado","Nota","Acciones"].map((h,i) => <th key={i} style={{ color: C.gold, padding: "6px 8px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {movimientos.length === 0
-                    ? <tr><td colSpan={5} style={{ textAlign: "center", padding: 16, color: C.oxford }}>Sin aportaciones registradas</td></tr>
-                    : movimientos.map((m, i) => (
+                    ? <tr><td colSpan={6} style={{ textAlign: "center", padding: 16, color: C.oxford }}>Sin aportaciones registradas</td></tr>
+                    : movimientos.map((m, i) => {
+                      if (editId === m.id) {
+                        return (
+                          <tr key={i} style={{ background: C.goldLight }}>
+                            <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{i+1}</td>
+                            <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
+                              <input type="date" value={editF.fecha} onChange={e => setEditF(x=>({...x,fecha:e.target.value}))} style={{width:120,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>
+                            </td>
+                            <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
+                              <input type="number" value={editF.monto} onChange={e => setEditF(x=>({...x,monto:e.target.value}))} style={{width:80,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>
+                            </td>
+                            <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, color: C.oxford }}>—</td>
+                            <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
+                              <input value={editF.nota} onChange={e => setEditF(x=>({...x,nota:e.target.value}))} style={{width:110,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>
+                            </td>
+                            <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
+                              <div style={{ display: "flex", gap: 4 }}>
+                                <Btn small color={C.green} onClick={() => guardarEdicionMov(m.id)}>Guardar</Btn>
+                                <Btn small color={C.oxford} onClick={() => setEditId(null)}>Cancelar</Btn>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return (
                       <tr key={i} style={{ background: i % 2 === 0 ? C.white : C.lightGray }}>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{i+1}</td>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{fmtFecha(m.fecha)}</td>
                         <td style={{ padding: "5px 8px", color: C.navy, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{fmt(m.monto)}</td>
                         <td style={{ padding: "5px 8px", color: C.green, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{fmt(m.acumulado)}</td>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{m.nota || "—"}</td>
-                      </tr>))
+                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <Btn small onClick={() => { setEditId(m.id); setEditF({ fecha: m.fecha?.substring(0,10) || today, monto: m.monto, nota: m.nota || "" }); }}>✎</Btn>
+                            <Btn small color={C.red} onClick={() => handleBorrarMov(m.id)}>🗑</Btn>
+                          </div>
+                        </td>
+                      </tr>);
+                    })
                   }
                 </tbody>
                 {movimientos.length > 0 && (
                   <tfoot><tr style={{ background: C.navyLight }}>
                     <td colSpan={2} style={{ padding: "7px 8px", fontWeight: 700, color: C.navy, fontSize: 12 }}>TOTAL APORTADO</td>
-                    <td colSpan={3} style={{ padding: "7px 8px", fontWeight: 700, color: C.navy, fontSize: 13 }}>{fmt(totalAportado)}</td>
+                    <td colSpan={4} style={{ padding: "7px 8px", fontWeight: 700, color: C.navy, fontSize: 13 }}>{fmt(totalAportado)}</td>
                   </tr></tfoot>
                 )}
               </table>
@@ -677,10 +728,13 @@ function ModCaja() {
             {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat} {c.apellido_mat || ""}</option>)}
           </Sel>
           <Inp label="Cuota quincenal ($)" type="number" value={f.cuota} onChange={s("cuota")}/>
-          <Inp label="Capital acumulado ($)" type="number" value={f.capital} onChange={s("capital")}/>
+          <Inp label="Capital inicial ($)" type="number" value={f.capital} onChange={s("capital")}/>
           <Inp label="Fecha de inicio" value={f.fecha_inicio} onChange={s("fecha_inicio")} placeholder="15-ene"/>
           <div style={{ marginBottom: 9 }}><Btn onClick={handleAgregar} loading={saving}>Agregar</Btn></div>
         </div>
+        <p style={{ margin: "8px 0 0", fontSize: 10, color: C.oxford }}>
+          🔒 El capital acumulado se calcula automáticamente sumando los movimientos reales registrados en "📋 Movimientos" — no se puede editar a mano, así nunca se desincroniza.
+        </p>
       </Card>
 
       <Card>
@@ -700,7 +754,7 @@ function ModCaja() {
                 i+1,
                 <input key={`p${c.id}`} value={editF.participante} onChange={e => setEditF(x=>({...x,participante:e.target.value}))} style={{width:120,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
                 <input key={`q${c.id}`} type="number" value={editF.cuota} onChange={e => setEditF(x=>({...x,cuota:e.target.value}))} style={{width:80,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
-                <input key={`ca${c.id}`} type="number" value={editF.capital} onChange={e => setEditF(x=>({...x,capital:e.target.value}))} style={{width:90,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
+                <span key={`ca${c.id}`} style={{ fontSize: 11, color: C.oxford }}>{fmt(c.capital)} 🔒</span>,
                 "—","—",
                 <input key={`f${c.id}`} value={editF.fecha_inicio} onChange={e => setEditF(x=>({...x,fecha_inicio:e.target.value}))} style={{width:70,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
                 <Btn key={`g${c.id}`} small color={C.green} onClick={() => guardarEdicion(c.id)}>Guardar</Btn>
