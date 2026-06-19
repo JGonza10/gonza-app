@@ -214,6 +214,176 @@ function ModalEditarPrestamo({ prestamo, onClose, onSaved }) {
   );
 }
 
+// ── MODAL: CORTES DE INTERÉS MENSUAL ─────────────────────────────────────────
+function ModalCortesInteres({ prestamo, onClose }) {
+  const { data: cortes, loading, reload } = useApiData(`/api/prestamos/${prestamo.id}/cortes`);
+  const [fechaPago, setFechaPago] = useState(today);
+  const [montoPagado, setMontoPagado] = useState("");
+  const [tipoPago, setTipoPago] = useState("transferencia");
+  const [nota, setNota] = useState("");
+  const [corteSeleccionado, setCorteSeleccionado] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const pendientes = cortes.filter(c => !c.pagado);
+  const pagados    = cortes.filter(c =>  c.pagado);
+  const totalPendiente = pendientes.reduce((a, c) => a + parseFloat(c.monto_interes || 0), 0);
+  const totalCobrado   = cortes.reduce((a, c) => a + parseFloat(c.monto_pagado || 0), 0);
+
+  const fmtPeriodo = p => {
+    if (!p) return "—";
+    const [y, m] = p.toString().substring(0, 10).split("-");
+    const meses = ["","Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+    return `${meses[parseInt(m)]} ${y}`;
+  };
+
+  async function handlePagar() {
+    if (!corteSeleccionado) return alert("Selecciona un mes para pagar");
+    const mp = parseFloat(montoPagado || corteSeleccionado.monto_interes);
+    if (mp <= 0) return alert("Ingresa un monto válido");
+    setSaving(true);
+    try {
+      await api(`/api/prestamos/${prestamo.id}/cortes/${corteSeleccionado.id}/pagar`, {
+        method: "PATCH",
+        body: JSON.stringify({ fecha_pago: fechaPago, monto_pagado: mp, tipo_pago: tipoPago, nota }),
+      });
+      setCorteSeleccionado(null);
+      setMontoPagado("");
+      setNota("");
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function handleProrrogar(corte) {
+    const notaPr = prompt("Nota de prórroga (opcional):", "PRÓRROGA — interés no cobrado") || "PRÓRROGA — interés no cobrado";
+    try {
+      await api(`/api/prestamos/${prestamo.id}/cortes/${corte.id}/prorrogar`, {
+        method: "PATCH",
+        body: JSON.stringify({ nota: notaPr }),
+      });
+      reload();
+    } catch (e) { alert("Error: " + e.message); }
+  }
+
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", width: 620, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.navy }}>📅 Intereses mensuales — {prestamo.deudor_nombre}</p>
+            <p style={{ margin: "3px 0 0", fontSize: 12, color: C.oxford }}>Monto: <b>{fmt(prestamo.monto)}</b> · Interés mensual: <b>{fmt(prestamo.interes_mensual)}</b></p>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 20, cursor: "pointer", color: C.oxford }}>✕</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 16 }}>
+          <div style={{ background: C.redLight, borderRadius: 10, padding: "10px 12px" }}>
+            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Interés pendiente</p>
+            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: C.red }}>{fmt(totalPendiente)}</p>
+            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{pendientes.length} mes(es)</p>
+          </div>
+          <div style={{ background: C.greenLight, borderRadius: 10, padding: "10px 12px" }}>
+            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Interés cobrado</p>
+            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: C.green }}>{fmt(totalCobrado)}</p>
+            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{pagados.length} mes(es)</p>
+          </div>
+          <div style={{ background: C.goldLight, borderRadius: 10, padding: "10px 12px" }}>
+            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Total cortes</p>
+            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: "#8B6914" }}>{cortes.length}</p>
+            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>meses desde el préstamo</p>
+          </div>
+        </div>
+
+        {corteSeleccionado && (
+          <div style={{ background: C.lightGray, borderRadius: 10, padding: "12px 14px", marginBottom: 14, border: `1px solid ${C.gold}` }}>
+            <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: C.navy }}>
+              Registrar pago — {fmtPeriodo(corteSeleccionado.periodo)}
+              <span style={{ marginLeft: 8, color: C.oxford, fontWeight: 400 }}>Esperado: {fmt(corteSeleccionado.monto_interes)}</span>
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, alignItems: "end" }}>
+              <Inp label="Fecha de pago" type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}/>
+              <Inp label="Monto pagado ($)" type="number" value={montoPagado}
+                placeholder={String(corteSeleccionado.monto_interes)}
+                onChange={e => setMontoPagado(e.target.value)}/>
+              <div style={{ marginBottom: 9 }}>
+                <label style={{ display: "block", fontSize: 12, color: C.oxford, marginBottom: 3, fontWeight: 600 }}>Tipo de pago</label>
+                <select value={tipoPago} onChange={e => setTipoPago(e.target.value)}
+                  style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, color: C.navy, background: C.lightGray }}>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="cheque">Cheque</option>
+                </select>
+              </div>
+              <Inp label="Nota (opcional)" value={nota} onChange={e => setNota(e.target.value)} placeholder="Observaciones"/>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn color={C.green} onClick={handlePagar} loading={saving}>✓ Registrar pago</Btn>
+              <Btn color={C.oxford} small onClick={() => setCorteSeleccionado(null)}>Cancelar</Btn>
+            </div>
+          </div>
+        )}
+
+        {loading ? <p style={{ fontSize: 12, color: C.oxford, textAlign: "center", padding: 16 }}>Cargando...</p> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: C.navy }}>
+                {["Mes","Interés esperado","Estado","Pagado","Fecha pago","Nota","Acción"].map((h, i) =>
+                  <th key={i} style={{ color: C.gold, padding: "7px 8px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {cortes.length === 0
+                  ? <tr><td colSpan={7} style={{ textAlign: "center", padding: 16, color: C.oxford }}>Sin cortes generados aún</td></tr>
+                  : cortes.map((c, i) => {
+                      const esPendiente = !c.pagado;
+                      const tieneProroga = !c.pagado && c.nota && c.nota.includes("PRÓRROGA");
+                      const bgRow = c.pagado ? C.greenLight : (tieneProroga ? C.goldLight : (i % 2 === 0 ? C.white : C.lightGray));
+                      return (
+                        <tr key={c.id} style={{ background: bgRow }}>
+                          <td style={{ padding: "6px 8px", fontWeight: 700, color: C.navy, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>
+                            {fmtPeriodo(c.periodo)}
+                          </td>
+                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(c.monto_interes)}</td>
+                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>
+                            {c.pagado
+                              ? <Badge color={C.green} bg={C.greenLight}>✓ Pagado</Badge>
+                              : tieneProroga
+                                ? <Badge color="#8B6914" bg={C.goldLight}>⏸ Prórroga</Badge>
+                                : <Badge color={C.red} bg={C.redLight}>⚠ Pendiente</Badge>}
+                          </td>
+                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, color: c.pagado ? C.green : C.oxford }}>
+                            {c.monto_pagado > 0 ? fmt(c.monto_pagado) : "—"}
+                          </td>
+                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>
+                            {fmtFecha(c.fecha_pago)}
+                          </td>
+                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {c.nota || "—"}
+                          </td>
+                          <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>
+                            {esPendiente && (
+                              <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
+                                <Btn small color={C.green} onClick={() => { setCorteSeleccionado(c); setMontoPagado(String(c.monto_interes)); }}>
+                                  $ Cobrar
+                                </Btn>
+                                <Btn small color="#8B6914" onClick={() => handleProrrogar(c)}>
+                                  ⏸
+                                </Btn>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                }
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ModPrestamos() {
   const { data: prestamos, loading, reload } = useApiData("/api/prestamos");
   const { data: clientes } = useApiData("/api/clientes");
