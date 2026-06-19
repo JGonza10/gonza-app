@@ -13,7 +13,8 @@ CAMBIOS v2 (alineación con "Sistema de consulta de pagos"):
 import os
 import psycopg2
 import psycopg2.extras
-from datetime import date
+from datetime import date, datetime, time
+from decimal import Decimal
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -21,6 +22,22 @@ import requests as http_requests
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
+
+# ─── SERIALIZACIÓN GLOBAL DE FECHAS Y DECIMALES ──────────────────────────────
+# Flask/json no sabe convertir objetos date/datetime/Decimal que vienen de
+# PostgreSQL (vía RealDictCursor) a JSON. Sin esto, cualquier ruta que olvide
+# castear una fecha con ::text revienta con un 500 silencioso en el navegador
+# (pantalla en blanco). Este hook lo resuelve de forma global y definitiva.
+_default_json = app.json.default
+
+def _json_default(o):
+    if isinstance(o, (date, datetime, time)):
+        return o.isoformat()
+    if isinstance(o, Decimal):
+        return float(o)
+    return _default_json(o)
+
+app.json.default = _json_default
 
 # ─── CONEXIÓN A LA BASE DE DATOS ─────────────────────────────────────────────
 # DATABASE_URL viene de la variable de entorno (Railway la inyecta automático)
@@ -380,7 +397,7 @@ def get_historial_prestamo(pid):
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        SELECT pp.id, pp.fecha_pago, pp.monto_interes, pp.monto_capital, pp.nota, tp.nombre AS tipo_pago
+        SELECT pp.id, pp.fecha_pago::text AS fecha_pago, pp.monto_interes, pp.monto_capital, pp.nota, tp.nombre AS tipo_pago
         FROM pagos_prestamo pp
         LEFT JOIN tipos_pago tp ON pp.tipo_pago_id = tp.id
         WHERE pp.prestamo_id = %s
@@ -568,9 +585,23 @@ def get_clientes_sin_ahorro():
 @app.route("/api/caja", methods=["GET"])
 @requiere_lectura("consultor")
 def get_caja():
+    """
+    Devuelve los participantes de la caja con el capital acumulado
+    calculado en tiempo real como la suma de sus movimientos reales
+    (no un campo fijo editable, para evitar desincronización).
+    """
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM caja ORDER BY id;")
+    cur.execute("""
+        SELECT c.id, c.participante, c.cliente_id, c.cuota, c.fecha_inicio,
+               c.fecha, c.nota, c.activo,
+               COALESCE(SUM(cm.monto), 0) AS capital
+        FROM caja c
+        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id
+        GROUP BY c.id, c.participante, c.cliente_id, c.cuota, c.fecha_inicio,
+                 c.fecha, c.nota, c.activo
+        ORDER BY c.id;
+    """)
     rows = cur.fetchall()
     conn.close()
     return jsonify(list(rows))
@@ -592,19 +623,27 @@ def add_caja():
     participante = f"{cliente['nombre']} {cliente['apellido_pat']} {cliente['apellido_mat'] or ''}".strip()
 
     cur.execute("""
-        INSERT INTO caja (participante, cliente_id, cuota, capital, fecha_inicio, fecha, nota)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO caja (participante, cliente_id, cuota, fecha_inicio, fecha, nota)
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING id;
     """, (
         participante,
         data["cliente_id"],
         data.get("cuota", 0),
-        data.get("capital", 0),
         data.get("fecha_inicio", ""),
         data.get("fecha"),
         data.get("nota", ""),
     ))
     nuevo_id = cur.fetchone()["id"]
+
+    # Si se proporcionó un capital inicial, se registra como el primer movimiento real
+    capital_inicial = float(data.get("capital", 0) or 0)
+    if capital_inicial > 0:
+        cur.execute("""
+            INSERT INTO caja_movimientos (caja_id, fecha, monto, nota)
+            VALUES (%s, %s, %s, %s);
+        """, (nuevo_id, data.get("fecha_inicio") or date.today().isoformat(), capital_inicial, "Capital inicial"))
+
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id}), 201
@@ -618,7 +657,7 @@ def update_caja(cid):
 
     campos = []
     valores = []
-    for campo in ("participante", "cuota", "capital", "fecha_inicio", "fecha", "nota", "activo"):
+    for campo in ("participante", "cuota", "fecha_inicio", "fecha", "nota", "activo"):
         if campo in data:
             campos.append(f"{campo} = %s")
             valores.append(data[campo])
@@ -1168,6 +1207,7 @@ def get_resumen():
 # ─── RUTAS: MOVIMIENTOS DE CAJA ───────────────────────────────────────────────
 
 @app.route("/api/caja/<int:cid>/movimientos", methods=["GET"])
+@requiere_lectura("consultor")
 def get_movimientos_caja(cid):
     """
     Devuelve el historial de aportaciones quincenales de un participante.
@@ -1228,33 +1268,56 @@ def add_movimiento_caja(cid):
     ))
     nuevo_id = cur.fetchone()["id"]
 
-    # Actualizar el capital acumulado del participante en la tabla caja
-    cur.execute("""
-        UPDATE caja
-        SET capital = capital + %s
-        WHERE id = %s;
-    """, (monto, cid))
-
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id, "mensaje": "Aportación registrada"}), 201
 
 
-@app.route("/api/caja/<int:cid>/movimientos/<int:mid>", methods=["DELETE"])
-@requiere_rol("administrador")
-def delete_movimiento_caja(cid, mid):
-    """Elimina una aportación específica (solo administradores) y descuenta el capital."""
+@app.route("/api/caja/<int:cid>/movimientos/<int:mid>", methods=["PATCH"])
+@requiere_rol("administrador", "analista")
+def update_movimiento_caja(cid, mid):
+    """Edita fecha, monto o nota de una aportación ya registrada. El capital se recalcula automáticamente."""
+    data = request.get_json()
+
+    campos = []
+    valores = []
+    for campo in ("fecha", "monto", "nota"):
+        if campo in data:
+            campos.append(f"{campo} = %s")
+            valores.append(data[campo])
+
+    if not campos:
+        return jsonify({"error": "Nada para actualizar"}), 400
+
     conn = get_db()
     cur = conn.cursor()
+    valores.extend([mid, cid])
+    cur.execute(f"""
+        UPDATE caja_movimientos SET {', '.join(campos)}
+        WHERE id = %s AND caja_id = %s
+        RETURNING id;
+    """, valores)
 
-    cur.execute("SELECT monto FROM caja_movimientos WHERE id = %s AND caja_id = %s;", (mid, cid))
-    mov = cur.fetchone()
-    if not mov:
+    if not cur.fetchone():
         conn.close()
         return jsonify({"error": "Movimiento no encontrado"}), 404
 
-    cur.execute("DELETE FROM caja_movimientos WHERE id = %s AND caja_id = %s;", (mid, cid))
-    cur.execute("UPDATE caja SET capital = capital - %s WHERE id = %s;", (mov["monto"], cid))
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Movimiento actualizado"})
+
+
+@app.route("/api/caja/<int:cid>/movimientos/<int:mid>", methods=["DELETE"])
+@requiere_rol("administrador")
+def delete_movimiento_caja(cid, mid):
+    """Elimina una aportación específica (solo administradores). El capital se recalcula automáticamente."""
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM caja_movimientos WHERE id = %s AND caja_id = %s RETURNING id;", (mid, cid))
+    if not cur.fetchone():
+        conn.close()
+        return jsonify({"error": "Movimiento no encontrado"}), 404
 
     conn.commit()
     conn.close()
@@ -1265,17 +1328,18 @@ def delete_movimiento_caja(cid, mid):
 def get_caja_resumen():
     """
     Resumen global de la caja: total acumulado real (suma de movimientos),
-    interés proyectado 0.04% anual, y total a entregar.
+    interés proyectado 4% anual, y total a entregar.
     """
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
         SELECT
-            COUNT(*)                        AS total_participantes,
-            COALESCE(SUM(c.capital_acumulado), 0)               AS total_acumulado,
-            COALESCE(SUM(c.capital_acumulado * 0.0004), 0)      AS total_interes,
-            COALESCE(SUM(c.capital_acumulado * 1.0004), 0)      AS total_a_entregar
-        FROM caja c;
+            COUNT(DISTINCT c.id)                              AS total_participantes,
+            COALESCE(SUM(cm.monto), 0)                        AS total_acumulado,
+            COALESCE(SUM(cm.monto) * 0.04, 0)                 AS total_interes,
+            COALESCE(SUM(cm.monto) * 1.04, 0)                 AS total_a_entregar
+        FROM caja c
+        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id;
     """)
     row = cur.fetchone()
     conn.close()
