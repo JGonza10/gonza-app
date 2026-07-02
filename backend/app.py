@@ -11,11 +11,12 @@ CAMBIOS v2 (alineación con "Sistema de consulta de pagos"):
 """
 
 import os
+import subprocess
 import psycopg2
 import psycopg2.extras
 from datetime import date, datetime, time
 from decimal import Decimal
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
 import requests as http_requests
@@ -1008,6 +1009,104 @@ def set_dias_anticipacion(data=None):
     conn.close()
     return jsonify({"mensaje": "Actualizado"})
 
+
+# ─── BACKUP Y RESTAURACIÓN COMPLETA (ESTRUCTURA + DATOS) ─────────────────────
+# Usa pg_dump / psql directamente contra Railway. Requiere que el paquete
+# "postgresql" esté disponible en el entorno de build (ver nixpacks.toml en
+# la raíz del repo). A diferencia de generar_backup_sql() (que solo exporta
+# datos de algunas tablas en INSERTs), esto genera un dump real con
+# CREATE TABLE, índices, vistas y todas las tablas — un respaldo total.
+
+@app.route("/api/configuracion/backup", methods=["GET"])
+@requiere_rol("administrador")
+def exportar_backup_completo():
+    """Genera un dump completo de PostgreSQL (estructura + datos) y lo
+       entrega como archivo .sql descargable directamente al navegador."""
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        return jsonify({"error": "DATABASE_URL no está configurada"}), 500
+
+    try:
+        resultado = subprocess.run(
+            [
+                "pg_dump",
+                database_url,
+                "--no-owner",
+                "--no-privileges",
+                "--clean",
+                "--if-exists",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=120,
+        )
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.decode("utf-8", errors="ignore")
+        return jsonify({"error": f"Error al generar el backup: {error_msg}"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "El backup tardó demasiado tiempo en generarse"}), 500
+    except FileNotFoundError:
+        return jsonify({
+            "error": "pg_dump no está instalado en el servidor. "
+                     "Verifica que nixpacks.toml esté en la raíz del repo."
+        }), 500
+
+    fecha = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    nombre_archivo = f"backup_gonza_{fecha}.sql"
+
+    return Response(
+        resultado.stdout,
+        mimetype="application/sql",
+        headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
+    )
+
+
+@app.route("/api/configuracion/restore", methods=["POST"])
+@requiere_rol("administrador")
+def restaurar_backup_completo():
+    """Restaura la base de datos completa a partir de un archivo .sql subido.
+       ⚠️ SOBRESCRIBE los datos actuales de las tablas incluidas en el dump."""
+    if "archivo" not in request.files:
+        return jsonify({"error": "No se envió ningún archivo"}), 400
+
+    archivo = request.files["archivo"]
+    if archivo.filename == "":
+        return jsonify({"error": "Archivo vacío"}), 400
+    if not archivo.filename.lower().endswith(".sql"):
+        return jsonify({"error": "El archivo debe tener extensión .sql"}), 400
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        return jsonify({"error": "DATABASE_URL no está configurada"}), 500
+
+    contenido = archivo.read()
+    if not contenido:
+        return jsonify({"error": "El archivo está vacío"}), 400
+
+    try:
+        resultado = subprocess.run(
+            ["psql", database_url, "-v", "ON_ERROR_STOP=1"],
+            input=contenido,
+            capture_output=True,
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "La restauración tardó demasiado tiempo"}), 500
+    except FileNotFoundError:
+        return jsonify({
+            "error": "psql no está instalado en el servidor. "
+                     "Verifica que nixpacks.toml esté en la raíz del repo."
+        }), 500
+
+    if resultado.returncode != 0:
+        return jsonify({
+            "error": "La restauración falló, no se completaron todos los cambios",
+            "detalle": resultado.stderr.decode("utf-8", errors="ignore")
+        }), 500
+
+    return jsonify({"mensaje": "Base de datos restaurada correctamente"})
+
+
 @app.route("/api/alertas", methods=["GET"])
 @requiere_lectura("consultor", "usuario")
 def get_alertas():
@@ -1176,7 +1275,11 @@ def enviar_correos_alertas():
 
 # ─── BACKUP DIARIO POR CORREO (CSV / XLSX / SQL) ─────────────────────────────
 
-TABLAS_BACKUP = ["clientes", "prestamos", "pagos_prestamo", "ahorros", "caja", "pagos_plazos", "usuarios", "roles"]
+TABLAS_BACKUP = [
+    "clientes", "prestamos", "pagos_prestamo", "cortes_interes",
+    "ahorros", "caja", "caja_movimientos", "pagos_plazos",
+    "tipos_pago", "configuracion", "usuarios", "roles",
+]
 
 
 def generar_backup_csv():
@@ -1830,4 +1933,4 @@ def get_informe_deudor(nombre):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
