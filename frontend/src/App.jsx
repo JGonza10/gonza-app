@@ -1431,6 +1431,8 @@ function ModConfiguracion() {
   const [savingCorreo, setSavingCorreo] = useState(false);
   const [msg, setMsg] = useState("");
   const [formatoBackup, setFormatoBackup] = useState("xlsx");
+  const [exportando, setExportando] = useState(false);
+  const [restaurando, setRestaurando] = useState(false);
 
   useEffect(() => {
     api("/api/configuracion/dias_anticipacion")
@@ -1474,6 +1476,71 @@ function ModConfiguracion() {
       alert(lineas.join("\n"));
     } catch (e) { alert("Error al enviar: " + e.message); }
     finally { setSavingCorreo(false); }
+  }
+
+  // Descarga un dump completo (estructura + datos) directo desde Railway
+  async function handleExportarBackup() {
+    setExportando(true);
+    try {
+      const user = sessionStorage.getItem("gonza_user");
+      const username = user ? JSON.parse(user).username : "";
+      const respuesta = await fetch(`${API_BASE}/api/configuracion/backup`, {
+        method: "GET",
+        headers: { "X-Username": username },
+      });
+      if (!respuesta.ok) {
+        const detalle = await respuesta.json().catch(() => ({}));
+        throw new Error(detalle.error || `Error ${respuesta.status}`);
+      }
+      const blob = await respuesta.blob();
+      const url = window.URL.createObjectURL(blob);
+      const enlace = document.createElement("a");
+      enlace.href = url;
+      const fecha = new Date().toISOString().split("T")[0];
+      enlace.download = `backup_gonza_${fecha}.sql`;
+      document.body.appendChild(enlace);
+      enlace.click();
+      enlace.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      alert("Error al exportar backup: " + e.message);
+    } finally {
+      setExportando(false);
+    }
+  }
+
+  // Restaura la base de datos completa desde un archivo .sql seleccionado
+  async function handleRestaurarBackup(e) {
+    const archivo = e.target.files[0];
+    e.target.value = ""; // permite volver a elegir el mismo archivo después
+    if (!archivo) return;
+
+    if (!window.confirm(
+      `⚠️ Vas a restaurar la base de datos desde:\n\n"${archivo.name}"\n\n` +
+      "Esto SOBRESCRIBIRÁ los datos actuales del sistema y no se puede deshacer.\n\n" +
+      "¿Deseas continuar?"
+    )) return;
+
+    setRestaurando(true);
+    try {
+      const user = sessionStorage.getItem("gonza_user");
+      const username = user ? JSON.parse(user).username : "";
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+
+      const respuesta = await fetch(`${API_BASE}/api/configuracion/restore`, {
+        method: "POST",
+        headers: { "X-Username": username }, // sin Content-Type: el navegador lo arma con boundary
+        body: formData,
+      });
+      const resultado = await respuesta.json();
+      if (!respuesta.ok) throw new Error(resultado.error || `Error ${respuesta.status}`);
+      alert("✅ " + resultado.mensaje);
+    } catch (e) {
+      alert("Error al restaurar: " + e.message);
+    } finally {
+      setRestaurando(false);
+    }
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando configuración...</p>;
@@ -1551,6 +1618,41 @@ function ModConfiguracion() {
 
           <div style={{ background: C.goldLight, borderRadius: 8, padding: "8px 12px", marginTop: 12, fontSize: 11, color: "#8B6914" }}>
             <b>Destinatarios:</b> todos los usuarios con rol <b>administrador</b> o <b>analista</b> que tengan correo registrado en la base de datos.
+          </div>
+        </Card>
+
+        {/* Backup y restauración completa de la base de datos */}
+        <Card>
+          <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: C.navy }}>🗄️ Base de datos (estructura + datos)</p>
+          <p style={{ margin: "0 0 14px", fontSize: 12, color: C.oxford, lineHeight: 1.6 }}>
+            Descarga un respaldo total de PostgreSQL (tablas, índices, vistas y todos los datos), o restaura el sistema a partir de un archivo <b>.sql</b> generado previamente.
+          </p>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Btn color={C.navy} onClick={handleExportarBackup} loading={exportando}>
+              📦 Exportar base de datos
+            </Btn>
+
+            <label style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "9px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+              cursor: restaurando ? "not-allowed" : "pointer",
+              background: C.redLight, color: C.red, border: `2px solid ${C.red}`,
+              opacity: restaurando ? 0.6 : 1,
+            }}>
+              {restaurando ? "Restaurando..." : "♻️ Restaurar desde .sql"}
+              <input
+                type="file"
+                accept=".sql"
+                onChange={handleRestaurarBackup}
+                disabled={restaurando}
+                style={{ display: "none" }}
+              />
+            </label>
+          </div>
+
+          <div style={{ background: C.redLight, borderRadius: 8, padding: "8px 12px", marginTop: 14, fontSize: 11, color: C.red }}>
+            <b>⚠️ Cuidado:</b> restaurar sobrescribe los datos actuales del sistema y no se puede deshacer. Úsalo solo con un respaldo confiable.
           </div>
         </Card>
       </div>
