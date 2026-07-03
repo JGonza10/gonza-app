@@ -1194,7 +1194,21 @@ def _generar_setval_serial(cur, tabla, columnas):
     return sql
 
 
-def _generar_vistas(cur):
+def _generar_indices(cur, tabla):
+    """Genera CREATE INDEX para los índices de una tabla (excluye el de la
+       llave primaria, que ya se crea automáticamente con PRIMARY KEY)."""
+    cur.execute("""
+        SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = %s
+          AND indexname NOT LIKE '%%_pkey';
+    """, (tabla,))
+    sql = ""
+    for idx in cur.fetchall():
+        sql += f"{idx['indexdef']};\n"
+    return sql
+
+
+
     """Genera CREATE VIEW para las vistas del esquema public."""
     cur.execute("""
         SELECT viewname, definition FROM pg_views WHERE schemaname = 'public';
@@ -1227,6 +1241,10 @@ def exportar_backup_completo():
 
         for tabla in tablas:
             partes.append(_generar_inserts(cur, tabla, columnas_por_tabla[tabla]))
+
+        partes.append("\n-- Índices\n")
+        for tabla in tablas:
+            partes.append(_generar_indices(cur, tabla))
 
         partes.append("\n-- Ajuste de secuencias (columnas SERIAL)\n")
         for tabla in tablas:
