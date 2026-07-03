@@ -19,7 +19,6 @@ INDICES = [
     ("idx_caja_cliente_id", 'CREATE INDEX IF NOT EXISTS idx_caja_cliente_id ON caja (cliente_id);'),
     ("idx_pagos_prestamo_prestamo_id", 'CREATE INDEX IF NOT EXISTS idx_pagos_prestamo_prestamo_id ON pagos_prestamo (prestamo_id);'),
     ("idx_cortes_interes_prestamo_id", 'CREATE INDEX IF NOT EXISTS idx_cortes_interes_prestamo_id ON cortes_interes (prestamo_id);'),
-    ("idx_pagos_plazos_prestamo_id", 'CREATE INDEX IF NOT EXISTS idx_pagos_plazos_prestamo_id ON pagos_plazos (prestamo_id);'),
     ("idx_caja_movimientos_caja_id", 'CREATE INDEX IF NOT EXISTS idx_caja_movimientos_caja_id ON caja_movimientos (caja_id);'),
     ("idx_usuarios_username", 'CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios (username);'),
     ("idx_prestamos_deudor_nombre_lower", 'CREATE INDEX IF NOT EXISTS idx_prestamos_deudor_nombre_lower ON prestamos (LOWER(deudor_nombre));'),
