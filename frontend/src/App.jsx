@@ -27,11 +27,18 @@ const fmtFecha = f => {
 
 async function api(path, options = {}) {
   const user = sessionStorage.getItem("gonza_user");
-  const username = user ? JSON.parse(user).username : "";
+  const token = user ? JSON.parse(user).token : "";
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", "X-Username": username },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
     ...options,
   });
+  if (res.status === 401) {
+    // Token inválido o expirado: cerrar sesión y regresar al login
+    sessionStorage.removeItem("gonza_user");
+    const body = await res.json().catch(() => ({}));
+    window.location.reload();
+    throw new Error(body.error || "Sesión expirada, inicia sesión de nuevo");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Error ${res.status}: ${res.statusText}`);
@@ -1483,10 +1490,10 @@ function ModConfiguracion() {
     setExportando(true);
     try {
       const user = sessionStorage.getItem("gonza_user");
-      const username = user ? JSON.parse(user).username : "";
+      const token = user ? JSON.parse(user).token : "";
       const respuesta = await fetch(`${API_BASE}/api/configuracion/backup`, {
         method: "GET",
-        headers: { "X-Username": username },
+        headers: { "Authorization": `Bearer ${token}` },
       });
       if (!respuesta.ok) {
         const detalle = await respuesta.json().catch(() => ({}));
@@ -1524,13 +1531,13 @@ function ModConfiguracion() {
     setRestaurando(true);
     try {
       const user = sessionStorage.getItem("gonza_user");
-      const username = user ? JSON.parse(user).username : "";
+      const token = user ? JSON.parse(user).token : "";
       const formData = new FormData();
       formData.append("archivo", archivo);
 
       const respuesta = await fetch(`${API_BASE}/api/configuracion/restore`, {
         method: "POST",
-        headers: { "X-Username": username }, // sin Content-Type: el navegador lo arma con boundary
+        headers: { "Authorization": `Bearer ${token}` }, // sin Content-Type: el navegador lo arma con boundary
         body: formData,
       });
       const resultado = await respuesta.json();
@@ -1699,45 +1706,47 @@ function AlertasBell() {
 // ── LOGIN CON "OLVIDÉ MI CONTRASEÑA" ─────────────────────────────────────────
 function ModalResetPassword({ onClose }) {
   const [username, setUsername] = useState("");
+  const [codigo, setCodigo] = useState("");
   const [newPass, setNewPass] = useState("");
   const [confirmPass, setConfirmPass] = useState("");
   const [saving, setSaving] = useState(false);
-  const [step, setStep] = useState(1); // 1=buscar usuario, 2=nueva contraseña
-  const [userData, setUserData] = useState(null);
+  const [step, setStep] = useState(1); // 1=pedir código, 2=código+nueva contraseña, 3=listo
+  const [resetToken, setResetToken] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
   const [msg, setMsg] = useState("");
 
-  async function handleBuscar() {
+  async function handleSolicitarCodigo() {
     if (!username.trim()) return alert("Ingresa tu nombre de usuario");
     setSaving(true);
     try {
-      // Verificar que el usuario existe consultando los roles (endpoint público)
-      // Usamos el endpoint de login con una contraseña incorrecta para saber si el usuario existe
-      const res = await fetch(`${API_BASE}/api/usuario-existe`, {
+      const res = await fetch(`${API_BASE}/api/usuarios/solicitar-reset`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim() }),
       });
-      if (!res.ok) {
-        alert("Usuario no encontrado. Verifica el nombre de usuario.");
-        return;
-      }
       const data = await res.json();
-      setUserData(data);
+      if (!res.ok) { alert(data.error || "No se pudo enviar el código"); return; }
+      setResetToken(data.token);
+      setInfoMsg(data.mensaje);
       setStep(2);
     } catch (e) {
       alert("Error de conexión: " + e.message);
     } finally { setSaving(false); }
   }
 
-  async function handleReset() {
+  async function handleConfirmar() {
+    if (!codigo.trim() || codigo.trim().length !== 6) return alert("Ingresa el código de 6 dígitos que llegó a tu correo");
     if (!newPass || newPass.length < 6) return alert("La contraseña debe tener al menos 6 caracteres");
     if (newPass !== confirmPass) return alert("Las contraseñas no coinciden");
     setSaving(true);
     try {
-      await api(`/api/usuarios/reset-password`, {
+      const res = await fetch(`${API_BASE}/api/usuarios/confirmar-reset`, {
         method: "POST",
-        body: JSON.stringify({ username: username.trim(), new_password: newPass }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: resetToken, codigo: codigo.trim(), new_password: newPass }),
       });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || "No se pudo restablecer la contraseña"); return; }
       setMsg("✅ Contraseña restablecida correctamente. Ya puedes iniciar sesión.");
       setStep(3);
     } catch (e) { alert("Error: " + e.message); }
@@ -1755,11 +1764,11 @@ function ModalResetPassword({ onClose }) {
         {step === 1 && (
           <>
             <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
-              Ingresa tu nombre de usuario para continuar.
+              Ingresa tu nombre de usuario. Te enviaremos un código al correo que tengas registrado.
             </p>
             <Inp label="Nombre de usuario" value={username} onChange={e => setUsername(e.target.value)} placeholder="Ej. jgonzalez" autoFocus/>
             <div style={{ display: "flex", gap: 8 }}>
-              <Btn color={C.orange} onClick={handleBuscar} loading={saving}>Continuar</Btn>
+              <Btn color={C.orange} onClick={handleSolicitarCodigo} loading={saving}>Enviar código</Btn>
               <Btn color={C.oxford} onClick={onClose}>Cancelar</Btn>
             </div>
           </>
@@ -1768,15 +1777,16 @@ function ModalResetPassword({ onClose }) {
         {step === 2 && (
           <>
             <div style={{ background: C.navyLight, borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12 }}>
-              Usuario encontrado: <b style={{ color: C.navy }}>{userData?.nombre || username}</b>
+              {infoMsg}
             </div>
+            <Inp label="Código de 6 dígitos" value={codigo} onChange={e => setCodigo(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="123456" autoFocus/>
             <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
-              Define una nueva contraseña. Mínimo 6 caracteres.
+              Define tu nueva contraseña. Mínimo 6 caracteres. El código vence en 15 minutos.
             </p>
             <Inp label="Nueva contraseña" type="password" value={newPass} onChange={e => setNewPass(e.target.value)} placeholder="••••••••"/>
             <Inp label="Confirmar contraseña" type="password" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} placeholder="••••••••"/>
             <div style={{ display: "flex", gap: 8 }}>
-              <Btn color={C.orange} onClick={handleReset} loading={saving}>Restablecer</Btn>
+              <Btn color={C.orange} onClick={handleConfirmar} loading={saving}>Restablecer</Btn>
               <Btn color={C.oxford} onClick={onClose}>Cancelar</Btn>
             </div>
           </>
