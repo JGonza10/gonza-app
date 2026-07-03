@@ -210,23 +210,6 @@ def login():
         "token": _generar_token_sesion(usuario["username"]),
     })
 
-@app.route("/api/historial-accesos", methods=["GET"])
-@requiere_rol("administrador")
-def get_historial_accesos():
-    """Últimos 200 accesos (exitosos y fallidos) — solo administrador."""
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT username, exito, ip, fecha::text AS fecha
-        FROM historial_accesos
-        ORDER BY fecha DESC
-        LIMIT 200;
-    """)
-    rows = cur.fetchall()
-    conn.close()
-    return jsonify(list(rows))
-
-
 def get_usuario_actual(username):
     """Devuelve {rol, cliente_id} del usuario, o None si no existe/inactivo."""
     if not username:
@@ -291,6 +274,23 @@ def requiere_lectura(*roles_extra):
             return f(*args, **kwargs)
         return envoltura
     return decorador
+
+
+@app.route("/api/historial-accesos", methods=["GET"])
+@requiere_rol("administrador")
+def get_historial_accesos():
+    """Últimos 200 accesos (exitosos y fallidos) — solo administrador."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT username, exito, ip, fecha::text AS fecha
+        FROM historial_accesos
+        ORDER BY fecha DESC
+        LIMIT 200;
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
 
 
 # ─── RUTAS: USUARIOS ──────────────────────────────────────────────────────────
