@@ -569,10 +569,55 @@ function ModPrestamos() {
 }
 
 // ── MÓDULO: CLIENTES — formulario HORIZONTAL ──────────────────────────────────
+function ModalHistorialCliente({ clienteId, onClose }) {
+  const { data, loading } = useApiData(`/api/clientes/${clienteId}/historial-completo`);
+
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
+      <Card style={{ width: 560, maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.navy }}>📋 Historial completo del cliente</p>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer", color: C.oxford }}>✕</button>
+        </div>
+
+        {loading && <p style={{ color: C.oxford }}>Cargando...</p>}
+
+        {!loading && data.cliente && (
+          <>
+            <div style={{ background: C.navyLight, borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+              <p style={{ margin: 0, fontWeight: 700, color: C.navy }}>{data.cliente.nombre} {data.cliente.apellido_pat} {data.cliente.apellido_mat}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: C.oxford }}>{data.cliente.telefono || "sin teléfono"} · {data.cliente.direccion || "sin dirección"}</p>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
+              <Card style={{ background: C.navyLight }}><p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Prestado activo</p><p style={{ margin: "2px 0 0", fontWeight: 700, color: C.navy }}>{fmt(data.totales.prestado_activo)}</p></Card>
+              <Card style={{ background: C.greenLight }}><p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Ahorrado</p><p style={{ margin: "2px 0 0", fontWeight: 700, color: C.green }}>{fmt(data.totales.ahorrado)}</p></Card>
+              <Card style={{ background: C.orangeLight }}><p style={{ margin: 0, fontSize: 10, color: C.oxford }}>En caja</p><p style={{ margin: "2px 0 0", fontWeight: 700, color: C.orange }}>{fmt(data.totales.en_caja)}</p></Card>
+            </div>
+
+            <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Préstamos ({data.prestamos.length})</p>
+            <Tabla headers={["Fecha", "Monto", "Interés", "Estado"]}
+              rows={data.prestamos.map(p => [p.fecha_prestamo, fmt(p.monto), fmt(p.interes_mensual), <Badge key={p.id}>{p.pagado ? "Pagado" : "Activo"}</Badge>])}/>
+
+            <p style={{ margin: "16px 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Ahorros ({data.ahorros.length})</p>
+            <Tabla headers={["Fecha", "Cantidad", "Nota"]}
+              rows={data.ahorros.map(a => [a.fecha, fmt(a.cantidad), a.nota || "—"])}/>
+
+            <p style={{ margin: "16px 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Caja de ahorro ({data.caja.length})</p>
+            <Tabla headers={["Fecha", "Capital acumulado", "Nota"]}
+              rows={data.caja.map(c => [c.fecha, fmt(c.capital), c.nota || "—"])}/>
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function ModClientes() {
   const { data: clientes, loading, reload } = useApiData("/api/clientes");
   const [f, setF] = useState({ nombre: "", apellido_pat: "", apellido_mat: "", telefono: "", direccion: "" });
   const [saving, setSaving] = useState(false);
+  const [verHistorial, setVerHistorial] = useState(null);
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   async function handleAgregar() {
@@ -608,11 +653,13 @@ function ModClientes() {
       <Card>
         <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Directorio ({clientes.length} clientes)</p>
         <Tabla
-          headers={["ID", "Apellido paterno", "Apellido materno", "Nombre", "Teléfono", "Estado"]}
+          headers={["ID", "Apellido paterno", "Apellido materno", "Nombre", "Teléfono", "Estado", ""]}
           rows={clientes.map(c => [c.id, c.apellido_pat, c.apellido_mat, c.nombre, c.telefono || "—",
-            <Badge key={c.id}>{c.activo ? "Activo" : "Inactivo"}</Badge>])}
+            <Badge key={c.id}>{c.activo ? "Activo" : "Inactivo"}</Badge>,
+            <Btn key={"h" + c.id} small color={C.oxford} onClick={() => setVerHistorial(c.id)}>Ver historial</Btn>])}
         />
       </Card>
+      {verHistorial && <ModalHistorialCliente clienteId={verHistorial} onClose={() => setVerHistorial(null)}/>}
     </div>
   );
 }
@@ -1204,9 +1251,10 @@ function ModResumen({ irA }) {
   const { data: ahorros,   loading: la } = useApiData("/api/ahorros");
   const { data: caja,      loading: lc } = useApiData("/api/caja");
   const { data: resumenIntereses }       = useApiData("/api/intereses-pendientes");
+  const { data: cartera, loading: lcart }= useApiData("/api/dashboard/cartera");
   const [deudorModal, setDeudorModal] = useState(null);
 
-  if (lp || la || lc) return <p style={{ padding: 20, color: C.oxford }}>Cargando resumen...</p>;
+  if (lp || la || lc || lcart) return <p style={{ padding: 20, color: C.oxford }}>Cargando resumen...</p>;
 
   const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
   const totalCartera        = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
@@ -1233,6 +1281,13 @@ function ModResumen({ irA }) {
   const datosIntereses = [
     { name: "Cobrado", value: resumenIntereses.reduce((a,r) => a + parseFloat(r.total_interes_cobrado||0), 0), color: C.green },
     { name: "Pendiente", value: totalInteresNoCobrado, color: C.red },
+  ].filter(d => d.value > 0);
+
+  // Datos para gráfica de cartera: vencida vs próxima a vencer vs al día
+  const datosCartera = [
+    { name: "Vencida", value: cartera.resumen.vencidos.monto, color: C.red },
+    { name: "Próxima a vencer", value: cartera.resumen.proximos.monto, color: C.orange },
+    { name: "Al día", value: cartera.resumen.al_dia.monto, color: C.green },
   ].filter(d => d.value > 0);
 
   const RADIAN = Math.PI / 180;
@@ -1273,7 +1328,7 @@ function ModResumen({ irA }) {
       </div>
 
       {/* Gráficas */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
 
         {/* Distribución del capital — Pie con etiquetas internas */}
         <Card>
@@ -1311,6 +1366,34 @@ function ModResumen({ irA }) {
               {fmt(datosIntereses.reduce((a,d) => a + d.value, 0))}
             </span>
           </div>
+        </Card>
+
+        {/* Cartera: vencida vs próxima a vencer vs al día */}
+        <Card>
+          <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Salud de la cartera</p>
+          <p style={{ margin: "0 0 8px", fontSize: 10, color: C.oxford }}>Por monto prestado activo</p>
+          {datosCartera.length === 0
+            ? <p style={{ textAlign: "center", color: C.oxford, fontSize: 12, padding: "40px 0" }}>Sin préstamos activos</p>
+            : <>
+              <ResponsiveContainer width="100%" height={230}>
+                <PieChart>
+                  <Pie data={datosCartera} dataKey="value" nameKey="name"
+                    cx="50%" cy="50%" innerRadius={55} outerRadius={90} labelLine={false} label={renderLabel}>
+                    {datosCartera.map((d, i) => <Cell key={i} fill={d.color}/>)}
+                  </Pie>
+                  <Tooltip formatter={v => fmt(v)}/>
+                  <Legend formatter={(v, e) => `${v}: ${fmt(e.payload.value)}`}/>
+                </PieChart>
+              </ResponsiveContainer>
+              {cartera.resumen.vencidos.cantidad > 0 && (
+                <div style={{ textAlign: "center", marginTop: -8 }}>
+                  <span style={{ fontSize: 11, color: C.red, fontWeight: 700 }}>
+                    ⚠️ {cartera.resumen.vencidos.cantidad} préstamo(s) vencido(s)
+                  </span>
+                </div>
+              )}
+            </>
+          }
         </Card>
       </div>
 
@@ -1440,6 +1523,7 @@ function ModConfiguracion() {
   const [formatoBackup, setFormatoBackup] = useState("xlsx");
   const [exportando, setExportando] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
+  const { data: historial, error: errorHistorial } = useApiData("/api/historial-accesos");
 
   useEffect(() => {
     api("/api/configuracion/dias_anticipacion")
@@ -1662,6 +1746,29 @@ function ModConfiguracion() {
             <b>⚠️ Cuidado:</b> restaurar sobrescribe los datos actuales del sistema y no se puede deshacer. Úsalo solo con un respaldo confiable.
           </div>
         </Card>
+
+        {/* Historial de accesos — solo visible para administrador (el backend ya lo protege también) */}
+        {!errorHistorial && historial.length > 0 && (
+          <Card>
+            <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 700, color: C.navy }}>🕵️ Historial de accesos</p>
+            <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
+              Últimos {historial.length} intentos de inicio de sesión (exitosos y fallidos), con IP de origen.
+            </p>
+            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+              <Tabla
+                headers={["Usuario", "Resultado", "IP", "Fecha"]}
+                rows={historial.map((h, i) => [
+                  h.username,
+                  <Badge key={i} color={h.exito ? C.green : C.red} bg={h.exito ? C.greenLight : C.redLight}>
+                    {h.exito ? "Exitoso" : "Fallido"}
+                  </Badge>,
+                  h.ip,
+                  h.fecha,
+                ])}
+              />
+            </div>
+          </Card>
+        )}
       </div>
     </div>
   );
@@ -1863,6 +1970,62 @@ const MENU = [
   { id: "config",     label: "Configuración",     icon: "⚙️",  soloAdmin: true },
 ];
 
+function BuscadorGlobal({ irA }) {
+  const [q, setQ] = useState("");
+  const [resultados, setResultados] = useState(null);
+  const [abierto, setAbierto] = useState(false);
+
+  useEffect(() => {
+    if (q.trim().length < 2) { setResultados(null); return; }
+    const timer = setTimeout(() => {
+      api(`/api/buscar?q=${encodeURIComponent(q.trim())}`).then(setResultados).catch(() => {});
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  const hayResultados = resultados && (resultados.clientes.length > 0 || resultados.prestamos.length > 0);
+
+  return (
+    <div style={{ position: "relative", width: 230, marginRight: 14 }}>
+      <input
+        value={q}
+        onChange={e => { setQ(e.target.value); setAbierto(true); }}
+        onFocus={() => setAbierto(true)}
+        onBlur={() => setTimeout(() => setAbierto(false), 150)}
+        placeholder="🔍 Buscar cliente o préstamo..."
+        style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "none", fontSize: 12, boxSizing: "border-box" }}
+      />
+      {abierto && q.trim().length >= 2 && (
+        <div style={{ position: "absolute", top: 34, left: 0, width: 300, background: C.white, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,.3)", zIndex: 100, maxHeight: 320, overflowY: "auto" }}>
+          {!hayResultados && <p style={{ margin: 0, padding: 12, fontSize: 12, color: C.oxford }}>Sin resultados</p>}
+          {resultados?.clientes.length > 0 && (
+            <div>
+              <p style={{ margin: 0, padding: "6px 10px", fontSize: 10, fontWeight: 700, color: C.oxford, background: C.lightGray }}>CLIENTES</p>
+              {resultados.clientes.map(c => (
+                <div key={c.id} onMouseDown={() => { irA("clientes"); setAbierto(false); setQ(""); }}
+                  style={{ padding: "8px 10px", fontSize: 12, cursor: "pointer", borderBottom: `1px solid ${C.border}`, color: C.oxford }}>
+                  {c.nombre} {c.apellido_pat} — {c.telefono || "sin teléfono"}
+                </div>
+              ))}
+            </div>
+          )}
+          {resultados?.prestamos.length > 0 && (
+            <div>
+              <p style={{ margin: 0, padding: "6px 10px", fontSize: 10, fontWeight: 700, color: C.oxford, background: C.lightGray }}>PRÉSTAMOS</p>
+              {resultados.prestamos.map(p => (
+                <div key={p.id} onMouseDown={() => { irA("prestamos"); setAbierto(false); setQ(""); }}
+                  style={{ padding: "8px 10px", fontSize: 12, cursor: "pointer", borderBottom: `1px solid ${C.border}`, color: C.oxford }}>
+                  {p.deudor_nombre} — {fmt(p.monto)} {p.pagado ? "(pagado)" : ""}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [sec, setSec] = useState("resumen");
   const [user, setUser] = useState(() => {
@@ -1890,6 +2053,7 @@ export default function App() {
           <div style={{ fontSize: 11, fontWeight: 700, color: "#a0b8d8", letterSpacing: 0.5, lineHeight: 1.1 }}>Gonzas <span style={{ color: C.orange }}>systems</span></div>
         </div>
         <div style={{ flex: 1 }}/>
+        <BuscadorGlobal irA={setSec}/>
         <div style={{ textAlign: "right", marginRight: 14 }}>
           <div style={{ fontSize: 12, color: C.white, fontWeight: 700 }}>{user.nombre}</div>
           <div style={{ fontSize: 10, color: C.gold, textTransform: "uppercase" }}>{user.rol}</div>
