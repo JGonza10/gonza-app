@@ -11,7 +11,6 @@ CAMBIOS v2 (alineación con "Sistema de consulta de pagos"):
 """
 
 import os
-import subprocess
 import psycopg2
 import psycopg2.extras
 from datetime import date, datetime, time
@@ -1011,51 +1010,187 @@ def set_dias_anticipacion(data=None):
 
 
 # ─── BACKUP Y RESTAURACIÓN COMPLETA (ESTRUCTURA + DATOS) ─────────────────────
-# Usa pg_dump / psql directamente contra Railway. Requiere que el paquete
-# "postgresql" esté disponible en el entorno de build (ver nixpacks.toml en
-# la raíz del repo). A diferencia de generar_backup_sql() (que solo exporta
-# datos de algunas tablas en INSERTs), esto genera un dump real con
-# CREATE TABLE, índices, vistas y todas las tablas — un respaldo total.
+# Implementado 100% en Python con psycopg2 (sin depender de pg_dump/psql).
+# Esto evita problemas de versión entre el cliente y el servidor de Postgres,
+# y funciona sin importar qué builder use Railway (Nixpacks, Railpack, etc).
+
+# Tipos de columna que necesitan longitud/precisión explícita en el CREATE TABLE
+_TIPOS_CON_LONGITUD = {"character varying": "VARCHAR", "character": "CHAR"}
+_TIPOS_CON_PRECISION = {"numeric": "NUMERIC"}
+_TIPOS_SIMPLES = {
+    "timestamp without time zone": "TIMESTAMP",
+    "timestamp with time zone": "TIMESTAMPTZ",
+    "double precision": "DOUBLE PRECISION",
+    "boolean": "BOOLEAN",
+    "text": "TEXT",
+    "date": "DATE",
+    "time without time zone": "TIME",
+    "integer": "INTEGER",
+    "bigint": "BIGINT",
+    "smallint": "SMALLINT",
+    "real": "REAL",
+    "json": "JSON",
+    "jsonb": "JSONB",
+    "uuid": "UUID",
+}
+
+
+def _tipo_columna_sql(col):
+    """Traduce un tipo de information_schema.columns a sintaxis SQL de CREATE TABLE."""
+    tipo = col["data_type"]
+    if tipo in _TIPOS_CON_LONGITUD:
+        largo = col["character_maximum_length"]
+        return f"{_TIPOS_CON_LONGITUD[tipo]}({largo})" if largo else _TIPOS_CON_LONGITUD[tipo]
+    if tipo in _TIPOS_CON_PRECISION:
+        precision, escala = col["numeric_precision"], col["numeric_scale"]
+        return f"NUMERIC({precision},{escala or 0})" if precision else "NUMERIC"
+    if tipo in _TIPOS_SIMPLES:
+        return _TIPOS_SIMPLES[tipo]
+    return (col.get("udt_name") or tipo).upper()
+
+
+def _tablas_publicas(cur):
+    """Lista las tablas base del esquema 'public', en orden alfabético."""
+    cur.execute("""
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        ORDER BY table_name;
+    """)
+    return [r["table_name"] for r in cur.fetchall()]
+
+
+def _generar_create_table(cur, tabla):
+    """Genera DROP + CREATE TABLE para una tabla, incluyendo llave primaria
+       y detectando columnas SERIAL/BIGSERIAL a partir de su default (nextval)."""
+    cur.execute("""
+        SELECT column_name, data_type, udt_name, character_maximum_length,
+               numeric_precision, numeric_scale, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s
+        ORDER BY ordinal_position;
+    """, (tabla,))
+    columnas = cur.fetchall()
+
+    lineas = []
+    for c in columnas:
+        es_serial = bool(c["column_default"]) and "nextval(" in c["column_default"]
+        if es_serial:
+            tipo_sql = "BIGSERIAL" if c["data_type"] == "bigint" else "SERIAL"
+        else:
+            tipo_sql = _tipo_columna_sql(c)
+
+        linea = f'    "{c["column_name"]}" {tipo_sql}'
+        if c["is_nullable"] == "NO":
+            linea += " NOT NULL"
+        if c["column_default"] is not None and not es_serial:
+            linea += f' DEFAULT {c["column_default"]}'
+        lineas.append(linea)
+
+    cur.execute("""
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        WHERE tc.table_schema = 'public' AND tc.table_name = %s
+          AND tc.constraint_type = 'PRIMARY KEY'
+        ORDER BY kcu.ordinal_position;
+    """, (tabla,))
+    pk_cols = [r["column_name"] for r in cur.fetchall()]
+    if pk_cols:
+        pk_list = ", ".join(f'"{c}"' for c in pk_cols)
+        lineas.append(f"    PRIMARY KEY ({pk_list})")
+
+    sql = f'DROP TABLE IF EXISTS "{tabla}" CASCADE;\n'
+    sql += f'CREATE TABLE "{tabla}" (\n' + ",\n".join(lineas) + "\n);\n"
+    return sql, [c["column_name"] for c in columnas]
+
+
+def _generar_inserts(cur, tabla, columnas):
+    """Genera los INSERT de todos los datos de una tabla, usando mogrify
+       (adaptación segura de valores, igual que consultas parametrizadas)."""
+    cur.execute(f'SELECT * FROM "{tabla}";')
+    filas = cur.fetchall()
+    if not filas:
+        return ""
+
+    cols_sql = ", ".join(f'"{c}"' for c in columnas)
+    partes = [f'\n-- Datos: {tabla} ({len(filas)} filas)\n']
+    for fila in filas:
+        valores = tuple(fila[c] for c in columnas)
+        insert = cur.mogrify(
+            f'INSERT INTO "{tabla}" ({cols_sql}) VALUES %s;', (valores,)
+        )
+        partes.append(insert.decode("utf-8") + "\n")
+    return "".join(partes)
+
+
+def _generar_setval_serial(cur, tabla, columnas):
+    """Para columnas SERIAL, reajusta la secuencia al máximo valor insertado
+       (si no se hace, el próximo INSERT normal choca con un ID duplicado)."""
+    sql = ""
+    for col in columnas:
+        cur.execute("SELECT pg_get_serial_sequence(%s, %s);", (tabla, col))
+        secuencia = cur.fetchone()["pg_get_serial_sequence"]
+        if secuencia:
+            sql += (
+                f"SELECT setval('{secuencia}', "
+                f'COALESCE((SELECT MAX("{col}") FROM "{tabla}"), 1), '
+                f'(SELECT MAX("{col}") FROM "{tabla}") IS NOT NULL);\n'
+            )
+    return sql
+
+
+def _generar_vistas(cur):
+    """Genera CREATE VIEW para las vistas del esquema public."""
+    cur.execute("""
+        SELECT viewname, definition FROM pg_views WHERE schemaname = 'public';
+    """)
+    sql = ""
+    for v in cur.fetchall():
+        sql += f'\nDROP VIEW IF EXISTS "{v["viewname"]}" CASCADE;\n'
+        sql += f'CREATE VIEW "{v["viewname"]}" AS {v["definition"]}\n'
+    return sql
+
 
 @app.route("/api/configuracion/backup", methods=["GET"])
 @requiere_rol("administrador")
 def exportar_backup_completo():
-    """Genera un dump completo de PostgreSQL (estructura + datos) y lo
-       entrega como archivo .sql descargable directamente al navegador."""
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        return jsonify({"error": "DATABASE_URL no está configurada"}), 500
-
+    """Genera un dump completo (estructura + datos + vistas) en Python puro,
+       sin depender de pg_dump, y lo entrega como .sql descargable."""
+    conn = get_db()
+    cur = conn.cursor()
     try:
-        resultado = subprocess.run(
-            [
-                "pg_dump",
-                database_url,
-                "--no-owner",
-                "--no-privileges",
-                "--clean",
-                "--if-exists",
-            ],
-            capture_output=True,
-            check=True,
-            timeout=120,
-        )
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode("utf-8", errors="ignore")
-        return jsonify({"error": f"Error al generar el backup: {error_msg}"}), 500
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "El backup tardó demasiado tiempo en generarse"}), 500
-    except FileNotFoundError:
-        return jsonify({
-            "error": "pg_dump no está instalado en el servidor. "
-                     "Verifica que nixpacks.toml esté en la raíz del repo."
-        }), 500
+        partes = ["-- Backup completo Sistema GONZA (estructura + datos)\n"
+                   f"-- Generado: {datetime.now().isoformat()}\n\n"
+                   "BEGIN;\n"]
 
+        tablas = _tablas_publicas(cur)
+        columnas_por_tabla = {}
+        for tabla in tablas:
+            create_sql, columnas = _generar_create_table(cur, tabla)
+            partes.append(f'\n-- ═══ Tabla: {tabla} ═══\n{create_sql}')
+            columnas_por_tabla[tabla] = columnas
+
+        for tabla in tablas:
+            partes.append(_generar_inserts(cur, tabla, columnas_por_tabla[tabla]))
+
+        partes.append("\n-- Ajuste de secuencias (columnas SERIAL)\n")
+        for tabla in tablas:
+            partes.append(_generar_setval_serial(cur, tabla, columnas_por_tabla[tabla]))
+
+        partes.append(_generar_vistas(cur))
+        partes.append("\nCOMMIT;\n")
+    except Exception as e:
+        return jsonify({"error": f"Error al generar el backup: {str(e)}"}), 500
+    finally:
+        conn.close()
+
+    contenido = "".join(partes)
     fecha = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     nombre_archivo = f"backup_gonza_{fecha}.sql"
 
     return Response(
-        resultado.stdout,
+        contenido,
         mimetype="application/sql",
         headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
     )
@@ -1064,8 +1199,10 @@ def exportar_backup_completo():
 @app.route("/api/configuracion/restore", methods=["POST"])
 @requiere_rol("administrador")
 def restaurar_backup_completo():
-    """Restaura la base de datos completa a partir de un archivo .sql subido.
-       ⚠️ SOBRESCRIBE los datos actuales de las tablas incluidas en el dump."""
+    """Restaura la base de datos completa a partir de un .sql generado por
+       /api/configuracion/backup. Se ejecuta como una sola transacción:
+       si algo falla, no se aplica ningún cambio (rollback automático).
+       ⚠️ SOBRESCRIBE los datos actuales de las tablas incluidas en el archivo."""
     if "archivo" not in request.files:
         return jsonify({"error": "No se envió ningún archivo"}), 400
 
@@ -1075,34 +1212,23 @@ def restaurar_backup_completo():
     if not archivo.filename.lower().endswith(".sql"):
         return jsonify({"error": "El archivo debe tener extensión .sql"}), 400
 
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        return jsonify({"error": "DATABASE_URL no está configurada"}), 500
-
-    contenido = archivo.read()
-    if not contenido:
+    contenido = archivo.read().decode("utf-8", errors="strict")
+    if not contenido.strip():
         return jsonify({"error": "El archivo está vacío"}), 400
 
+    conn = get_db()
     try:
-        resultado = subprocess.run(
-            ["psql", database_url, "-v", "ON_ERROR_STOP=1"],
-            input=contenido,
-            capture_output=True,
-            timeout=180,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "La restauración tardó demasiado tiempo"}), 500
-    except FileNotFoundError:
+        cur = conn.cursor()
+        cur.execute(contenido)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
         return jsonify({
-            "error": "psql no está instalado en el servidor. "
-                     "Verifica que nixpacks.toml esté en la raíz del repo."
+            "error": "La restauración falló, no se aplicó ningún cambio (rollback automático)",
+            "detalle": str(e)
         }), 500
-
-    if resultado.returncode != 0:
-        return jsonify({
-            "error": "La restauración falló, no se completaron todos los cambios",
-            "detalle": resultado.stderr.decode("utf-8", errors="ignore")
-        }), 500
+    finally:
+        conn.close()
 
     return jsonify({"mensaje": "Base de datos restaurada correctamente"})
 
