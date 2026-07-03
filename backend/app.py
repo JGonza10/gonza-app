@@ -98,10 +98,84 @@ def get_db():
 
 # ─── RUTAS: AUTENTICACIÓN ─────────────────────────────────────────────────────
 
+def _asegurar_tablas_auxiliares():
+    """Crea tablas auxiliares del sistema si no existen todavía. Es seguro
+       llamar esto en cada arranque: usa IF NOT EXISTS, nunca duplica ni
+       borra nada. Así no dependemos de que alguien corra una migración
+       manual — el propio despliegue se encarga."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS historial_accesos (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL,
+                exito BOOLEAN NOT NULL,
+                ip VARCHAR(64),
+                fecha TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_historial_accesos_username_fecha
+            ON historial_accesos (username, fecha DESC);
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.warning(f"No se pudo verificar/crear tablas auxiliares: {e}")
+
+
+_asegurar_tablas_auxiliares()
+
+INTENTOS_MAXIMOS = 5
+VENTANA_BLOQUEO_MINUTOS = 15
+
+
+def _ip_del_cliente():
+    """Railway pone la IP real del visitante en X-Forwarded-For (va detrás
+       de un proxy), así que la revisamos primero."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.remote_addr or "desconocida"
+
+
+def _registrar_acceso(username, exito):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO historial_accesos (username, exito, ip) VALUES (%s, %s, %s);",
+        (username, exito, _ip_del_cliente())
+    )
+    conn.commit()
+    conn.close()
+
+
+def _cuenta_bloqueada(username):
+    """True si hubo 5+ intentos fallidos en los últimos 15 minutos."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT COUNT(*) AS n FROM historial_accesos
+        WHERE username = %s AND exito = FALSE
+          AND fecha > NOW() - INTERVAL '%s minutes';
+    """, (username, VENTANA_BLOQUEO_MINUTOS))
+    n = cur.fetchone()["n"]
+    conn.close()
+    return n >= INTENTOS_MAXIMOS
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     """Verifica usuario y contraseña, devuelve datos del usuario y su rol."""
     data = request.get_json()
+    username = data.get("username", "")
+
+    if username and _cuenta_bloqueada(username):
+        return jsonify({
+            "error": f"Demasiados intentos fallidos. Espera {VENTANA_BLOQUEO_MINUTOS} minutos antes de volver a intentar."
+        }), 429
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
@@ -110,19 +184,23 @@ def login():
         FROM usuarios u
         JOIN roles r ON u.rol_id = r.id
         WHERE u.username = %s;
-    """, (data.get("username", ""),))
+    """, (username,))
     usuario = cur.fetchone()
     conn.close()
 
     if not usuario:
+        _registrar_acceso(username, False)
         return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
 
     if not usuario["activo"]:
+        _registrar_acceso(username, False)
         return jsonify({"error": "Usuario inactivo"}), 403
 
     if not check_password_hash(usuario["password_hash"], data.get("password", "")):
+        _registrar_acceso(username, False)
         return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
 
+    _registrar_acceso(username, True)
     return jsonify({
         "id": usuario["id"],
         "username": usuario["username"],
@@ -131,6 +209,23 @@ def login():
         "cliente_id": usuario["cliente_id"],
         "token": _generar_token_sesion(usuario["username"]),
     })
+
+@app.route("/api/historial-accesos", methods=["GET"])
+@requiere_rol("administrador")
+def get_historial_accesos():
+    """Últimos 200 accesos (exitosos y fallidos) — solo administrador."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT username, exito, ip, fecha::text AS fecha
+        FROM historial_accesos
+        ORDER BY fecha DESC
+        LIMIT 200;
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
+
 
 def get_usuario_actual(username):
     """Devuelve {rol, cliente_id} del usuario, o None si no existe/inactivo."""
@@ -290,6 +385,93 @@ def get_roles():
 
 
 # ─── RUTAS: PRÉSTAMOS ────────────────────────────────────────────────────────
+
+@app.route("/api/buscar", methods=["GET"])
+@requiere_lectura("consultor")
+def buscar_global():
+    """Busca un texto libre (nombre o teléfono) en clientes y en los
+       nombres de deudor registrados en préstamos. Pensado para un buscador
+       único arriba de todos los módulos."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"clientes": [], "prestamos": []})
+
+    patron = f"%{q}%"
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, nombre, apellido_pat, apellido_mat, telefono
+        FROM clientes
+        WHERE nombre ILIKE %s OR apellido_pat ILIKE %s OR apellido_mat ILIKE %s OR telefono ILIKE %s
+        ORDER BY nombre
+        LIMIT 15;
+    """, (patron, patron, patron, patron))
+    clientes = cur.fetchall()
+
+    cur.execute("""
+        SELECT id, deudor_nombre, monto, pagado
+        FROM prestamos
+        WHERE deudor_nombre ILIKE %s
+        ORDER BY fecha_prestamo DESC
+        LIMIT 15;
+    """, (patron,))
+    prestamos = cur.fetchall()
+
+    conn.close()
+    return jsonify({"clientes": list(clientes), "prestamos": list(prestamos)})
+
+
+@app.route("/api/clientes/<int:cid>/historial-completo", methods=["GET"])
+@requiere_lectura("consultor")
+def get_historial_completo_cliente(cid):
+    """Reúne en una sola respuesta todo lo relacionado a un cliente:
+       datos básicos, préstamos, ahorros y aportaciones a caja."""
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM clientes WHERE id = %s;", (cid,))
+    cliente = cur.fetchone()
+    if not cliente:
+        conn.close()
+        return jsonify({"error": "Cliente no encontrado"}), 404
+
+    cur.execute("""
+        SELECT id, deudor_nombre, monto, interes_mensual, fecha_prestamo::text AS fecha_prestamo, pagado
+        FROM prestamos WHERE cliente_id = %s ORDER BY fecha_prestamo DESC;
+    """, (cid,))
+    prestamos = cur.fetchall()
+
+    cur.execute("""
+        SELECT id, cantidad, fecha::text AS fecha, nota
+        FROM ahorros WHERE cliente_id = %s ORDER BY fecha DESC;
+    """, (cid,))
+    ahorros = cur.fetchall()
+
+    cur.execute("""
+        SELECT c.id, c.fecha::text AS fecha, c.nota,
+               COALESCE(SUM(cm.monto), 0) AS capital
+        FROM caja c
+        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id
+        WHERE c.cliente_id = %s
+        GROUP BY c.id, c.fecha, c.nota
+        ORDER BY c.fecha DESC;
+    """, (cid,))
+    caja = cur.fetchall()
+
+    conn.close()
+    return jsonify({
+        "cliente": cliente,
+        "prestamos": list(prestamos),
+        "ahorros": list(ahorros),
+        "caja": list(caja),
+        "totales": {
+            "prestado_activo": sum(float(p["monto"] or 0) for p in prestamos if not p["pagado"]),
+            "ahorrado": sum(float(a["cantidad"] or 0) for a in ahorros),
+            "en_caja": sum(float(c["capital"] or 0) for c in caja),
+        },
+    })
+
 
 @app.route("/api/prestamos", methods=["GET"])
 @requiere_lectura("consultor")
@@ -1303,6 +1485,41 @@ def restaurar_backup_completo():
         conn.close()
 
     return jsonify({"mensaje": "Base de datos restaurada correctamente"})
+
+
+@app.route("/api/dashboard/cartera", methods=["GET"])
+@requiere_lectura("consultor")
+def get_dashboard_cartera():
+    """Clasifica los préstamos activos en vencidos / próximos a vencer / al día,
+       según los días de anticipación configurados."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT valor FROM configuracion WHERE clave = 'dias_anticipacion_alerta';")
+    row = cur.fetchone()
+    dias_anticipacion = int(row["valor"]) if row else 2
+
+    cur.execute("""
+        SELECT id, deudor_nombre, monto, interes_mensual,
+               proximo_corte::text AS proximo_corte,
+               (proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos;
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    vencidos = [r for r in rows if r["dias_para_corte"] < 0]
+    proximos = [r for r in rows if 0 <= r["dias_para_corte"] <= dias_anticipacion]
+    al_dia = [r for r in rows if r["dias_para_corte"] > dias_anticipacion]
+
+    def _resumen(lista):
+        return {"cantidad": len(lista), "monto": sum(float(r["monto"] or 0) for r in lista)}
+
+    return jsonify({
+        "vencidos": vencidos,
+        "proximos": proximos,
+        "al_dia": al_dia,
+        "resumen": {"vencidos": _resumen(vencidos), "proximos": _resumen(proximos), "al_dia": _resumen(al_dia)},
+    })
 
 
 @app.route("/api/alertas", methods=["GET"])
