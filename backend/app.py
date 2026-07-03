@@ -11,17 +11,63 @@ CAMBIOS v2 (alineación con "Sistema de consulta de pagos"):
 """
 
 import os
+import secrets
 import psycopg2
 import psycopg2.extras
+import itsdangerous
 from datetime import date, datetime, time
 from decimal import Decimal
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, g
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
 import requests as http_requests
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
+
+# ─── TOKENS DE SESIÓN FIRMADOS ────────────────────────────────────────────────
+# Reemplaza el header "X-Username" (que cualquiera podía falsificar) por un
+# token firmado criptográficamente. Nadie puede fabricar uno válido sin conocer
+# SECRET_KEY, que solo vive en el servidor.
+#
+# IMPORTANTE: define SECRET_KEY como variable de entorno en Railway con un
+# valor largo y aleatorio (ej. generado con: python -c "import secrets; print(secrets.token_hex(32))")
+# Si no la defines, el servidor genera una temporal al arrancar — funciona,
+# pero cada vez que Railway reinicie el contenedor, todas las sesiones activas
+# se invalidan y los usuarios tendrán que volver a iniciar sesión.
+
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    app.logger.warning(
+        "SECRET_KEY no está configurada. Usando una clave temporal: "
+        "las sesiones se invalidarán en cada reinicio del servidor. "
+        "Define SECRET_KEY en las variables de entorno de Railway."
+    )
+    SECRET_KEY = secrets.token_hex(32)
+
+_serializer = itsdangerous.URLSafeTimedSerializer(SECRET_KEY)
+TOKEN_SESION_MAX_AGE = 8 * 60 * 60   # 8 horas
+TOKEN_RESET_MAX_AGE = 15 * 60        # 15 minutos
+
+
+def _generar_token_sesion(username):
+    return _serializer.dumps({"username": username}, salt="sesion")
+
+
+def _obtener_username_autenticado():
+    """Lee y valida el token del header Authorization: Bearer <token>.
+       Devuelve (username, None) si es válido, o (None, mensaje_error) si no."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, "No autorizado (falta sesión)"
+    token = auth[7:].strip()
+    try:
+        datos = _serializer.loads(token, salt="sesion", max_age=TOKEN_SESION_MAX_AGE)
+        return datos.get("username"), None
+    except itsdangerous.SignatureExpired:
+        return None, "Tu sesión expiró, inicia sesión de nuevo"
+    except itsdangerous.BadSignature:
+        return None, "Sesión inválida, inicia sesión de nuevo"
 
 # ─── SERIALIZACIÓN GLOBAL DE FECHAS Y DECIMALES ──────────────────────────────
 # Flask/json no sabe convertir objetos date/datetime/Decimal que vienen de
@@ -83,6 +129,7 @@ def login():
         "nombre": usuario["nombre"],
         "rol": usuario["rol"],
         "cliente_id": usuario["cliente_id"],
+        "token": _generar_token_sesion(usuario["username"]),
     })
 
 def get_usuario_actual(username):
@@ -107,18 +154,22 @@ def get_rol(username):
 
 
 def requiere_rol(*roles_permitidos):
-    """Decorador: bloquea la ruta si el usuario no tiene uno de los roles permitidos.
-       El frontend debe enviar el header 'X-Username' con cada petición."""
+    """Decorador: bloquea la ruta si el token de sesión no es válido o el
+       usuario no tiene uno de los roles permitidos."""
     def decorador(f):
         from functools import wraps
         @wraps(f)
         def envoltura(*args, **kwargs):
-            username = request.headers.get("X-Username")
+            username, error = _obtener_username_autenticado()
+            if error:
+                return jsonify({"error": error}), 401
             rol = get_rol(username)
             if rol is None:
                 return jsonify({"error": "No autorizado"}), 401
             if rol not in roles_permitidos:
                 return jsonify({"error": "No tienes permiso para esta acción"}), 403
+            g.username = username
+            g.rol = rol
             return f(*args, **kwargs)
         return envoltura
     return decorador
@@ -127,19 +178,21 @@ def requiere_rol(*roles_permitidos):
 def requiere_lectura(*roles_extra):
     """Decorador para rutas GET: permite administrador y analista siempre,
        y además los roles indicados en roles_extra (ej. 'consultor').
-       Si no hay header X-Username, permite el acceso (compatibilidad)."""
+       Requiere sesión válida siempre (ya no permite acceso sin token)."""
     def decorador(f):
         from functools import wraps
         @wraps(f)
         def envoltura(*args, **kwargs):
-            username = request.headers.get("X-Username")
-            if not username:
-                return f(*args, **kwargs)
+            username, error = _obtener_username_autenticado()
+            if error:
+                return jsonify({"error": error}), 401
             rol = get_rol(username)
             if rol is None:
                 return jsonify({"error": "No autorizado"}), 401
             if rol not in ("administrador", "analista") + roles_extra:
                 return jsonify({"error": "No tienes permiso para ver esta información"}), 403
+            g.username = username
+            g.rol = rol
             return f(*args, **kwargs)
         return envoltura
     return decorador
@@ -583,6 +636,7 @@ def get_resumen_intereses_pendientes():
 # ─── RUTAS: CLIENTES ──────────────────────────────────────────────────────────
 
 @app.route("/api/clientes", methods=["GET"])
+@requiere_lectura("consultor")
 def get_clientes():
     conn = get_db()
     cur = conn.cursor()
@@ -949,7 +1003,7 @@ def abonar_plazo(pid):
 def get_mis_datos():
     """Para el rol 'usuario': devuelve préstamos, ahorro y caja del cliente
        vinculado a su cuenta. Otros roles pueden usarlo pasando ?cliente_id=."""
-    username = request.headers.get("X-Username")
+    username = g.username
     info = get_usuario_actual(username)
 
     cliente_id = request.args.get("cliente_id", type=int)
@@ -1318,8 +1372,8 @@ def requiere_cron(f):
             return f(*args, **kwargs)
 
         # 2. Permitir si es un administrador autenticado (prueba manual desde UI)
-        username = request.headers.get("X-Username", "")
-        if username and get_rol(username) == "administrador":
+        username, error = _obtener_username_autenticado()
+        if not error and username and get_rol(username) == "administrador":
             return f(*args, **kwargs)
 
         # 3. Si CRON_SECRET no está configurado en el entorno, advertir en lugar de bloquear
@@ -1727,6 +1781,7 @@ def delete_movimiento_caja(cid, mid):
 
 
 @app.route("/api/caja/resumen", methods=["GET"])
+@requiere_lectura("consultor")
 def get_caja_resumen():
     """
     Resumen global de la caja: total acumulado real (suma de movimientos),
@@ -1747,26 +1802,26 @@ def get_caja_resumen():
     conn.close()
     return jsonify(dict(row))
 
-# ─── RUTAS: RESET DE CONTRASEÑA (acceso público) ─────────────────────────────
+# ─── RUTAS: RESET DE CONTRASEÑA (con código enviado al correo) ──────────────
+# Flujo:
+#   1. POST /api/usuarios/solicitar-reset {username}
+#      -> genera un código de 6 dígitos, lo envía al correo registrado del
+#         usuario, y devuelve un token firmado (válido 15 min) que contiene
+#         el código esperado. El código NUNCA se guarda en la base de datos.
+#   2. POST /api/usuarios/confirmar-reset {token, codigo, new_password}
+#      -> valida que el token no haya expirado y que el código coincida:
+#         solo entonces actualiza la contraseña.
 
-@app.route("/api/usuario-existe", methods=["POST"])
-def usuario_existe():
-    """
-    Verifica si un usuario existe (para el flujo de recuperación de contraseña).
-    Solo devuelve nombre y username — no expone datos sensibles.
-    """
+@app.route("/api/usuarios/solicitar-reset", methods=["POST"])
+def solicitar_reset_password():
     data = request.get_json()
-    username = data.get("username", "").strip()
+    username = (data.get("username") or "").strip()
     if not username:
         return jsonify({"error": "Username requerido"}), 400
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT u.id, u.username, u.nombre, u.activo
-        FROM usuarios u
-        WHERE u.username = %s;
-    """, (username,))
+    cur.execute("SELECT nombre, correo, activo FROM usuarios WHERE username = %s;", (username,))
     row = cur.fetchone()
     conn.close()
 
@@ -1774,37 +1829,62 @@ def usuario_existe():
         return jsonify({"error": "Usuario no encontrado"}), 404
     if not row["activo"]:
         return jsonify({"error": "Usuario inactivo"}), 403
+    if not row["correo"]:
+        return jsonify({
+            "error": "Este usuario no tiene correo registrado. "
+                     "Pide a un administrador que te agregue uno en el módulo de Usuarios."
+        }), 400
 
-    return jsonify({"username": row["username"], "nombre": row["nombre"]})
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    token = _serializer.dumps({"username": username, "codigo": codigo}, salt="reset-password")
 
-
-@app.route("/api/usuarios/reset-password", methods=["POST"])
-def reset_password():
+    cuerpo = f"""
+    <h3>Sistema GONZA — Código para restablecer tu contraseña</h3>
+    <p>Hola {row['nombre']}, tu código de verificación es:</p>
+    <p style="font-size:28px; font-weight:bold; letter-spacing:6px;">{codigo}</p>
+    <p>Este código vence en 15 minutos. Si tú no solicitaste este cambio, ignora este correo.</p>
     """
-    Restablece la contraseña de un usuario dado su username.
-    No requiere autenticación (flujo de recuperación desde login).
-    La nueva contraseña debe tener al menos 6 caracteres.
-    """
+    try:
+        enviar_correo(row["correo"], "GONZA — Código para restablecer contraseña", cuerpo)
+    except Exception as e:
+        return jsonify({"error": f"No se pudo enviar el correo: {str(e)}"}), 500
+
+    return jsonify({
+        "mensaje": f"Código enviado a {row['correo'][:3]}***",
+        "token": token,
+    })
+
+
+@app.route("/api/usuarios/confirmar-reset", methods=["POST"])
+def confirmar_reset_password():
     data = request.get_json()
-    username = data.get("username", "").strip()
+    token = data.get("token", "")
+    codigo = (data.get("codigo") or "").strip()
     new_password = data.get("new_password", "")
 
-    if not username or not new_password:
-        return jsonify({"error": "Username y nueva contraseña son requeridos"}), 400
+    if not token or not codigo or not new_password:
+        return jsonify({"error": "Faltan datos (token, código o nueva contraseña)"}), 400
     if len(new_password) < 6:
         return jsonify({"error": "La contraseña debe tener al menos 6 caracteres"}), 400
 
+    try:
+        datos = _serializer.loads(token, salt="reset-password", max_age=TOKEN_RESET_MAX_AGE)
+    except itsdangerous.SignatureExpired:
+        return jsonify({"error": "El código expiró, solicita uno nuevo"}), 400
+    except itsdangerous.BadSignature:
+        return jsonify({"error": "Token inválido, solicita un código nuevo"}), 400
+
+    if not secrets.compare_digest(datos["codigo"], codigo):
+        return jsonify({"error": "Código incorrecto"}), 400
+
+    username = datos["username"]
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT id, activo FROM usuarios WHERE username = %s;", (username,))
     row = cur.fetchone()
-
-    if not row:
+    if not row or not row["activo"]:
         conn.close()
-        return jsonify({"error": "Usuario no encontrado"}), 404
-    if not row["activo"]:
-        conn.close()
-        return jsonify({"error": "Usuario inactivo"}), 403
+        return jsonify({"error": "Usuario no encontrado o inactivo"}), 404
 
     cur.execute(
         "UPDATE usuarios SET password_hash = %s WHERE username = %s;",
@@ -1984,6 +2064,7 @@ def enviar_correo_completo():
 # ─── INFORME POR DEUDOR ───────────────────────────────────────────────────────
 
 @app.route("/api/informe-deudor/<path:nombre>", methods=["GET"])
+@requiere_lectura("consultor")
 def get_informe_deudor(nombre):
     """Informe ejecutivo completo de un deudor: préstamos, abonos, cortes de interés."""
     conn = get_db()
