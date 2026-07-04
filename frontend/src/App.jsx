@@ -545,6 +545,11 @@ function ModPrestamos() {
             ];
           })}
         />
+        <div style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.oxford }}>TOTALES GRUPO</div>
+          <div style={{ fontSize: 12 }}>Capital: <span style={{ fontWeight: 700, color: C.navy }}>{fmt(totalCartera)}</span></div>
+          <div style={{ fontSize: 12 }}>Con interés: <span style={{ fontWeight: 700, color: C.green }}>{fmt(totalCartera + totalInteresesEsperados)}</span></div>
+        </div>
       </Card>
 
       {pagados.length > 0 && <Card>
@@ -731,6 +736,11 @@ function ModAhorro() {
               : <Btn key={`e${a.id}`} small onClick={() => { setEditId(a.id); setEditValor(a.cantidad); }}>Editar</Btn>
           ])}
         />
+        <div style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.oxford }}>TOTALES GRUPO</div>
+          <div style={{ fontSize: 12 }}>Ahorrado: <span style={{ fontWeight: 700, color: C.navy }}>{fmt(total)}</span></div>
+          <div style={{ fontSize: 12 }}>Integrantes: <span style={{ fontWeight: 700, color: C.green }}>{ahorros.length}</span></div>
+        </div>
       </Card>
     </div>
   );
@@ -747,7 +757,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
   const [editF, setEditF] = useState({});
 
   const totalAportado = movimientos.reduce((a, m) => a + parseFloat(m.monto || 0), 0);
-  const interes = totalAportado * 0.04;
+  const interes = totalAportado * 0.08;
   const totalConInteres = totalAportado + interes;
 
   async function handleRegistrar() {
@@ -891,7 +901,7 @@ function ModCaja() {
 
   const totalCapital = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
   const totalCuota = caja.reduce((a, c) => a + parseFloat(c.cuota || 0), 0);
-  const interesProyectado = totalCapital * 0.04;
+  const interesProyectado = totalCapital * 0.08;
 
   async function handleAgregar() {
     if (!f.cliente_id) return alert("Selecciona un cliente");
@@ -938,7 +948,7 @@ function ModCaja() {
           <p style={{ margin: "2px 0 0", fontSize: 22, fontWeight: 700, color: "#8B6914" }}>{fmt(totalCuota)}</p>
         </Card>
         <Card style={{ background: C.greenLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Interés anual proyectado (4%)</p>
+          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Interés anual proyectado (8%)</p>
           <p style={{ margin: "2px 0 0", fontSize: 22, fontWeight: 700, color: C.green }}>{fmt(interesProyectado)}</p>
         </Card>
       </div>
@@ -969,9 +979,9 @@ function ModCaja() {
           </div>
         </div>
         <Tabla
-          headers={["No.", "Nombre", "Cuota quincenal", "Capital acumulado", "Interés (4%)", "Total estimado", "Inicio", "Acciones"]}
+          headers={["No.", "Nombre", "Cuota quincenal", "Capital acumulado", "Interés (8%)", "Total estimado", "Inicio", "Acciones"]}
           rows={caja.map((c, i) => {
-            const interes = parseFloat(c.capital || 0) * 0.04;
+            const interes = parseFloat(c.capital || 0) * 0.08;
             const totalEstimado = parseFloat(c.capital || 0) + interes;
             if (editId === c.id) {
               return [
@@ -1067,6 +1077,11 @@ function ModPagosPlazos() {
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando plazos...</p>;
+
+  const totalCosto = plazos.reduce((a, p) => a + parseFloat(p.costo || 0), 0);
+  const totalAbonado = plazos.reduce((a, p) => a + parseFloat(p.abonado || 0), 0);
+  const totalRestante = totalCosto - totalAbonado;
+
   return (
     <div>
       <SectionTitle>Pagos a plazos</SectionTitle>
@@ -1129,6 +1144,11 @@ function ModPagosPlazos() {
               ];
             })}
           />
+          <div style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.oxford }}>TOTALES GRUPO</div>
+            <div style={{ fontSize: 12 }}>Costo total: <span style={{ fontWeight: 700, color: C.navy }}>{fmt(totalCosto)}</span></div>
+            <div style={{ fontSize: 12 }}>Abonado: <span style={{ fontWeight: 700, color: C.green }}>{fmt(totalAbonado)}</span> · Restante: <span style={{ fontWeight: 700, color: C.orange }}>{fmt(totalRestante)}</span></div>
+          </div>
         </Card>
       </div>
     </div>
@@ -1263,7 +1283,7 @@ function ModResumen({ irA }) {
   const totalInteresNoCobrado = resumenIntereses.reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
   const totalAhorros        = ahorros.reduce((a, x) => a + parseFloat(x.cantidad || 0), 0);
   const totalCaja           = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
-  const interesAnualCaja    = totalCaja * 0.04;
+  const interesAnualCaja    = totalCaja * 0.08;
 
   // Top deudores por capital activo
   const porDeudor = {};
@@ -1313,7 +1333,7 @@ function ModResumen({ irA }) {
             sub: "acumulado histórico pendiente" },
           { l: "Ahorro total del grupo",         v: fmt(totalAhorros),          c: C.green,   bg: C.greenLight,  i: "🏦", sec: "ahorro" },
           { l: "Capital caja de ahorro",         v: fmt(totalCaja),             c: C.orange,  bg: C.orangeLight, i: "💰", sec: "caja" },
-          { l: "Interés anual proyectado (4%)",  v: fmt(interesAnualCaja),      c: "#166534", bg: C.greenLight,  i: "📈", sec: "caja",
+          { l: "Interés anual proyectado (8%)",  v: fmt(interesAnualCaja),      c: "#166534", bg: C.greenLight,  i: "📈", sec: "caja",
             sub: "sobre el capital de caja" },
         ].map((s, i) => (
           <Card key={i} onClick={() => irA(s.sec)} style={{ background: s.bg, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
@@ -1459,6 +1479,8 @@ function ModUsuarios() {
   const { data: roles } = useApiData("/api/roles");
   const [f, setF] = useState({ username: "", nombre: "", password: "", rol_id: "" });
   const [saving, setSaving] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editF, setEditF] = useState({});
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   async function handleAgregar() {
@@ -1474,6 +1496,21 @@ function ModUsuarios() {
   async function handleToggleActivo(uid, activo) {
     try { await api(`/api/usuarios/${uid}`, { method: "PATCH", body: JSON.stringify({ activo: !activo }) }); reload(); }
     catch (e) { alert("Error: " + e.message); }
+  }
+
+  function iniciarEdicion(u) {
+    setEditId(u.id);
+    setEditF({ correo: u.correo || "", rol_id: u.rol_id });
+  }
+
+  async function guardarEdicion(uid) {
+    try {
+      await api(`/api/usuarios/${uid}`, {
+        method: "PATCH",
+        body: JSON.stringify({ correo: editF.correo, rol_id: parseInt(editF.rol_id) }),
+      });
+      setEditId(null); reload();
+    } catch (e) { alert("Error: " + e.message); }
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando usuarios...</p>;
@@ -1498,15 +1535,38 @@ function ModUsuarios() {
       <Card>
         <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Usuarios del sistema ({usuarios.length})</p>
         <Tabla
-          headers={["ID", "Nombre", "Usuario", "Rol", "Estado", "Acción"]}
-          rows={usuarios.map(u => [
-            u.id, u.nombre, u.username,
-            <Badge key={`r${u.id}`}>{u.rol}</Badge>,
-            <Badge key={`e${u.id}`} color={u.activo?C.green:C.red} bg={u.activo?C.greenLight:C.redLight}>{u.activo?"Activo":"Inactivo"}</Badge>,
-            <Btn key={`b${u.id}`} small color={u.activo?C.red:C.green} onClick={()=>handleToggleActivo(u.id,u.activo)}>
-              {u.activo?"Desactivar":"Activar"}
-            </Btn>
-          ])}
+          headers={["ID", "Nombre", "Usuario", "Correo", "Rol", "Estado", "Acción"]}
+          rows={usuarios.map(u => {
+            if (editId === u.id) {
+              return [
+                u.id, u.nombre, u.username,
+                <input key={`co${u.id}`} type="email" value={editF.correo} onChange={e => setEditF(x => ({ ...x, correo: e.target.value }))}
+                  placeholder="correo@ejemplo.com"
+                  style={{ width: 150, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                <select key={`ro${u.id}`} value={editF.rol_id} onChange={e => setEditF(x => ({ ...x, rol_id: e.target.value }))}
+                  style={{ padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}>
+                  {roles.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+                </select>,
+                <Badge key={`e${u.id}`} color={u.activo?C.green:C.red} bg={u.activo?C.greenLight:C.redLight}>{u.activo?"Activo":"Inactivo"}</Badge>,
+                <div key={`acc${u.id}`} style={{ display: "flex", gap: 4 }}>
+                  <Btn small color={C.green} onClick={() => guardarEdicion(u.id)}>Guardar</Btn>
+                  <Btn small color={C.oxford} onClick={() => setEditId(null)}>Cancelar</Btn>
+                </div>
+              ];
+            }
+            return [
+              u.id, u.nombre, u.username,
+              u.correo || <span style={{ color: C.oxford, fontStyle: "italic" }}>sin correo</span>,
+              <Badge key={`r${u.id}`}>{u.rol}</Badge>,
+              <Badge key={`e${u.id}`} color={u.activo?C.green:C.red} bg={u.activo?C.greenLight:C.redLight}>{u.activo?"Activo":"Inactivo"}</Badge>,
+              <div key={`acc${u.id}`} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <Btn small onClick={() => iniciarEdicion(u)}>Editar</Btn>
+                <Btn small color={u.activo?C.red:C.green} onClick={()=>handleToggleActivo(u.id,u.activo)}>
+                  {u.activo?"Desactivar":"Activar"}
+                </Btn>
+              </div>
+            ];
+          })}
         />
       </Card>
     </div>
