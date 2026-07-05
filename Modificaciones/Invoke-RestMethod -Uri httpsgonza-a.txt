@@ -1,3 +1,0 @@
-Invoke-RestMethod -Uri "https://gonza-app-production.up.railway.app/api/login" -Method Post -ContentType "application/json" -Body '{"username":"admin","password":"admin123"}'
-
-gonza-app-production.up.railway.app

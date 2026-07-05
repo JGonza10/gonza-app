@@ -11,18 +11,63 @@ CAMBIOS v2 (alineación con "Sistema de consulta de pagos"):
 """
 
 import os
-import subprocess
+import secrets
 import psycopg2
 import psycopg2.extras
+import itsdangerous
 from datetime import date, datetime, time
 from decimal import Decimal
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, g
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
 import requests as http_requests
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
+
+# ─── TOKENS DE SESIÓN FIRMADOS ────────────────────────────────────────────────
+# Reemplaza el header "X-Username" (que cualquiera podía falsificar) por un
+# token firmado criptográficamente. Nadie puede fabricar uno válido sin conocer
+# SECRET_KEY, que solo vive en el servidor.
+#
+# IMPORTANTE: define SECRET_KEY como variable de entorno en Railway con un
+# valor largo y aleatorio (ej. generado con: python -c "import secrets; print(secrets.token_hex(32))")
+# Si no la defines, el servidor genera una temporal al arrancar — funciona,
+# pero cada vez que Railway reinicie el contenedor, todas las sesiones activas
+# se invalidan y los usuarios tendrán que volver a iniciar sesión.
+
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    app.logger.warning(
+        "SECRET_KEY no está configurada. Usando una clave temporal: "
+        "las sesiones se invalidarán en cada reinicio del servidor. "
+        "Define SECRET_KEY en las variables de entorno de Railway."
+    )
+    SECRET_KEY = secrets.token_hex(32)
+
+_serializer = itsdangerous.URLSafeTimedSerializer(SECRET_KEY)
+TOKEN_SESION_MAX_AGE = 8 * 60 * 60   # 8 horas
+TOKEN_RESET_MAX_AGE = 15 * 60        # 15 minutos
+
+
+def _generar_token_sesion(username):
+    return _serializer.dumps({"username": username}, salt="sesion")
+
+
+def _obtener_username_autenticado():
+    """Lee y valida el token del header Authorization: Bearer <token>.
+       Devuelve (username, None) si es válido, o (None, mensaje_error) si no."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, "No autorizado (falta sesión)"
+    token = auth[7:].strip()
+    try:
+        datos = _serializer.loads(token, salt="sesion", max_age=TOKEN_SESION_MAX_AGE)
+        return datos.get("username"), None
+    except itsdangerous.SignatureExpired:
+        return None, "Tu sesión expiró, inicia sesión de nuevo"
+    except itsdangerous.BadSignature:
+        return None, "Sesión inválida, inicia sesión de nuevo"
 
 # ─── SERIALIZACIÓN GLOBAL DE FECHAS Y DECIMALES ──────────────────────────────
 # Flask/json no sabe convertir objetos date/datetime/Decimal que vienen de
@@ -53,10 +98,84 @@ def get_db():
 
 # ─── RUTAS: AUTENTICACIÓN ─────────────────────────────────────────────────────
 
+def _asegurar_tablas_auxiliares():
+    """Crea tablas auxiliares del sistema si no existen todavía. Es seguro
+       llamar esto en cada arranque: usa IF NOT EXISTS, nunca duplica ni
+       borra nada. Así no dependemos de que alguien corra una migración
+       manual — el propio despliegue se encarga."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS historial_accesos (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL,
+                exito BOOLEAN NOT NULL,
+                ip VARCHAR(64),
+                fecha TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_historial_accesos_username_fecha
+            ON historial_accesos (username, fecha DESC);
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.warning(f"No se pudo verificar/crear tablas auxiliares: {e}")
+
+
+_asegurar_tablas_auxiliares()
+
+INTENTOS_MAXIMOS = 5
+VENTANA_BLOQUEO_MINUTOS = 15
+
+
+def _ip_del_cliente():
+    """Railway pone la IP real del visitante en X-Forwarded-For (va detrás
+       de un proxy), así que la revisamos primero."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.remote_addr or "desconocida"
+
+
+def _registrar_acceso(username, exito):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO historial_accesos (username, exito, ip) VALUES (%s, %s, %s);",
+        (username, exito, _ip_del_cliente())
+    )
+    conn.commit()
+    conn.close()
+
+
+def _cuenta_bloqueada(username):
+    """True si hubo 5+ intentos fallidos en los últimos 15 minutos."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT COUNT(*) AS n FROM historial_accesos
+        WHERE username = %s AND exito = FALSE
+          AND fecha > NOW() - INTERVAL '%s minutes';
+    """, (username, VENTANA_BLOQUEO_MINUTOS))
+    n = cur.fetchone()["n"]
+    conn.close()
+    return n >= INTENTOS_MAXIMOS
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     """Verifica usuario y contraseña, devuelve datos del usuario y su rol."""
     data = request.get_json()
+    username = data.get("username", "")
+
+    if username and _cuenta_bloqueada(username):
+        return jsonify({
+            "error": f"Demasiados intentos fallidos. Espera {VENTANA_BLOQUEO_MINUTOS} minutos antes de volver a intentar."
+        }), 429
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
@@ -65,25 +184,30 @@ def login():
         FROM usuarios u
         JOIN roles r ON u.rol_id = r.id
         WHERE u.username = %s;
-    """, (data.get("username", ""),))
+    """, (username,))
     usuario = cur.fetchone()
     conn.close()
 
     if not usuario:
+        _registrar_acceso(username, False)
         return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
 
     if not usuario["activo"]:
+        _registrar_acceso(username, False)
         return jsonify({"error": "Usuario inactivo"}), 403
 
     if not check_password_hash(usuario["password_hash"], data.get("password", "")):
+        _registrar_acceso(username, False)
         return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
 
+    _registrar_acceso(username, True)
     return jsonify({
         "id": usuario["id"],
         "username": usuario["username"],
         "nombre": usuario["nombre"],
         "rol": usuario["rol"],
         "cliente_id": usuario["cliente_id"],
+        "token": _generar_token_sesion(usuario["username"]),
     })
 
 def get_usuario_actual(username):
@@ -108,18 +232,22 @@ def get_rol(username):
 
 
 def requiere_rol(*roles_permitidos):
-    """Decorador: bloquea la ruta si el usuario no tiene uno de los roles permitidos.
-       El frontend debe enviar el header 'X-Username' con cada petición."""
+    """Decorador: bloquea la ruta si el token de sesión no es válido o el
+       usuario no tiene uno de los roles permitidos."""
     def decorador(f):
         from functools import wraps
         @wraps(f)
         def envoltura(*args, **kwargs):
-            username = request.headers.get("X-Username")
+            username, error = _obtener_username_autenticado()
+            if error:
+                return jsonify({"error": error}), 401
             rol = get_rol(username)
             if rol is None:
                 return jsonify({"error": "No autorizado"}), 401
             if rol not in roles_permitidos:
                 return jsonify({"error": "No tienes permiso para esta acción"}), 403
+            g.username = username
+            g.rol = rol
             return f(*args, **kwargs)
         return envoltura
     return decorador
@@ -128,22 +256,41 @@ def requiere_rol(*roles_permitidos):
 def requiere_lectura(*roles_extra):
     """Decorador para rutas GET: permite administrador y analista siempre,
        y además los roles indicados en roles_extra (ej. 'consultor').
-       Si no hay header X-Username, permite el acceso (compatibilidad)."""
+       Requiere sesión válida siempre (ya no permite acceso sin token)."""
     def decorador(f):
         from functools import wraps
         @wraps(f)
         def envoltura(*args, **kwargs):
-            username = request.headers.get("X-Username")
-            if not username:
-                return f(*args, **kwargs)
+            username, error = _obtener_username_autenticado()
+            if error:
+                return jsonify({"error": error}), 401
             rol = get_rol(username)
             if rol is None:
                 return jsonify({"error": "No autorizado"}), 401
             if rol not in ("administrador", "analista") + roles_extra:
                 return jsonify({"error": "No tienes permiso para ver esta información"}), 403
+            g.username = username
+            g.rol = rol
             return f(*args, **kwargs)
         return envoltura
     return decorador
+
+
+@app.route("/api/historial-accesos", methods=["GET"])
+@requiere_rol("administrador")
+def get_historial_accesos():
+    """Últimos 200 accesos (exitosos y fallidos) — solo administrador."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT username, exito, ip, fecha::text AS fecha
+        FROM historial_accesos
+        ORDER BY fecha DESC
+        LIMIT 200;
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(list(rows))
 
 
 # ─── RUTAS: USUARIOS ──────────────────────────────────────────────────────────
@@ -238,6 +385,93 @@ def get_roles():
 
 
 # ─── RUTAS: PRÉSTAMOS ────────────────────────────────────────────────────────
+
+@app.route("/api/buscar", methods=["GET"])
+@requiere_lectura("consultor")
+def buscar_global():
+    """Busca un texto libre (nombre o teléfono) en clientes y en los
+       nombres de deudor registrados en préstamos. Pensado para un buscador
+       único arriba de todos los módulos."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"clientes": [], "prestamos": []})
+
+    patron = f"%{q}%"
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, nombre, apellido_pat, apellido_mat, telefono
+        FROM clientes
+        WHERE nombre ILIKE %s OR apellido_pat ILIKE %s OR apellido_mat ILIKE %s OR telefono ILIKE %s
+        ORDER BY nombre
+        LIMIT 15;
+    """, (patron, patron, patron, patron))
+    clientes = cur.fetchall()
+
+    cur.execute("""
+        SELECT id, deudor_nombre, monto, pagado
+        FROM prestamos
+        WHERE deudor_nombre ILIKE %s
+        ORDER BY fecha_prestamo DESC
+        LIMIT 15;
+    """, (patron,))
+    prestamos = cur.fetchall()
+
+    conn.close()
+    return jsonify({"clientes": list(clientes), "prestamos": list(prestamos)})
+
+
+@app.route("/api/clientes/<int:cid>/historial-completo", methods=["GET"])
+@requiere_lectura("consultor")
+def get_historial_completo_cliente(cid):
+    """Reúne en una sola respuesta todo lo relacionado a un cliente:
+       datos básicos, préstamos, ahorros y aportaciones a caja."""
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM clientes WHERE id = %s;", (cid,))
+    cliente = cur.fetchone()
+    if not cliente:
+        conn.close()
+        return jsonify({"error": "Cliente no encontrado"}), 404
+
+    cur.execute("""
+        SELECT id, deudor_nombre, monto, interes_mensual, fecha_prestamo::text AS fecha_prestamo, pagado
+        FROM prestamos WHERE cliente_id = %s ORDER BY fecha_prestamo DESC;
+    """, (cid,))
+    prestamos = cur.fetchall()
+
+    cur.execute("""
+        SELECT id, cantidad, fecha::text AS fecha, nota
+        FROM ahorros WHERE cliente_id = %s ORDER BY fecha DESC;
+    """, (cid,))
+    ahorros = cur.fetchall()
+
+    cur.execute("""
+        SELECT c.id, c.fecha::text AS fecha, c.nota,
+               COALESCE(SUM(cm.monto), 0) AS capital
+        FROM caja c
+        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id
+        WHERE c.cliente_id = %s
+        GROUP BY c.id, c.fecha, c.nota
+        ORDER BY c.fecha DESC;
+    """, (cid,))
+    caja = cur.fetchall()
+
+    conn.close()
+    return jsonify({
+        "cliente": cliente,
+        "prestamos": list(prestamos),
+        "ahorros": list(ahorros),
+        "caja": list(caja),
+        "totales": {
+            "prestado_activo": sum(float(p["monto"] or 0) for p in prestamos if not p["pagado"]),
+            "ahorrado": sum(float(a["cantidad"] or 0) for a in ahorros),
+            "en_caja": sum(float(c["capital"] or 0) for c in caja),
+        },
+    })
+
 
 @app.route("/api/prestamos", methods=["GET"])
 @requiere_lectura("consultor")
@@ -584,6 +818,7 @@ def get_resumen_intereses_pendientes():
 # ─── RUTAS: CLIENTES ──────────────────────────────────────────────────────────
 
 @app.route("/api/clientes", methods=["GET"])
+@requiere_lectura("consultor")
 def get_clientes():
     conn = get_db()
     cur = conn.cursor()
@@ -950,7 +1185,7 @@ def abonar_plazo(pid):
 def get_mis_datos():
     """Para el rol 'usuario': devuelve préstamos, ahorro y caja del cliente
        vinculado a su cuenta. Otros roles pueden usarlo pasando ?cliente_id=."""
-    username = request.headers.get("X-Username")
+    username = g.username
     info = get_usuario_actual(username)
 
     cliente_id = request.args.get("cliente_id", type=int)
@@ -1011,51 +1246,205 @@ def set_dias_anticipacion(data=None):
 
 
 # ─── BACKUP Y RESTAURACIÓN COMPLETA (ESTRUCTURA + DATOS) ─────────────────────
-# Usa pg_dump / psql directamente contra Railway. Requiere que el paquete
-# "postgresql" esté disponible en el entorno de build (ver nixpacks.toml en
-# la raíz del repo). A diferencia de generar_backup_sql() (que solo exporta
-# datos de algunas tablas en INSERTs), esto genera un dump real con
-# CREATE TABLE, índices, vistas y todas las tablas — un respaldo total.
+# Implementado 100% en Python con psycopg2 (sin depender de pg_dump/psql).
+# Esto evita problemas de versión entre el cliente y el servidor de Postgres,
+# y funciona sin importar qué builder use Railway (Nixpacks, Railpack, etc).
+
+# Tipos de columna que necesitan longitud/precisión explícita en el CREATE TABLE
+_TIPOS_CON_LONGITUD = {"character varying": "VARCHAR", "character": "CHAR"}
+_TIPOS_CON_PRECISION = {"numeric": "NUMERIC"}
+_TIPOS_SIMPLES = {
+    "timestamp without time zone": "TIMESTAMP",
+    "timestamp with time zone": "TIMESTAMPTZ",
+    "double precision": "DOUBLE PRECISION",
+    "boolean": "BOOLEAN",
+    "text": "TEXT",
+    "date": "DATE",
+    "time without time zone": "TIME",
+    "integer": "INTEGER",
+    "bigint": "BIGINT",
+    "smallint": "SMALLINT",
+    "real": "REAL",
+    "json": "JSON",
+    "jsonb": "JSONB",
+    "uuid": "UUID",
+}
+
+
+def _tipo_columna_sql(col):
+    """Traduce un tipo de information_schema.columns a sintaxis SQL de CREATE TABLE."""
+    tipo = col["data_type"]
+    if tipo in _TIPOS_CON_LONGITUD:
+        largo = col["character_maximum_length"]
+        return f"{_TIPOS_CON_LONGITUD[tipo]}({largo})" if largo else _TIPOS_CON_LONGITUD[tipo]
+    if tipo in _TIPOS_CON_PRECISION:
+        precision, escala = col["numeric_precision"], col["numeric_scale"]
+        return f"NUMERIC({precision},{escala or 0})" if precision else "NUMERIC"
+    if tipo in _TIPOS_SIMPLES:
+        return _TIPOS_SIMPLES[tipo]
+    return (col.get("udt_name") or tipo).upper()
+
+
+def _tablas_publicas(cur):
+    """Lista las tablas base del esquema 'public', en orden alfabético."""
+    cur.execute("""
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        ORDER BY table_name;
+    """)
+    return [r["table_name"] for r in cur.fetchall()]
+
+
+def _generar_create_table(cur, tabla):
+    """Genera DROP + CREATE TABLE para una tabla, incluyendo llave primaria
+       y detectando columnas SERIAL/BIGSERIAL a partir de su default (nextval)."""
+    cur.execute("""
+        SELECT column_name, data_type, udt_name, character_maximum_length,
+               numeric_precision, numeric_scale, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s
+        ORDER BY ordinal_position;
+    """, (tabla,))
+    columnas = cur.fetchall()
+
+    lineas = []
+    for c in columnas:
+        es_serial = bool(c["column_default"]) and "nextval(" in c["column_default"]
+        if es_serial:
+            tipo_sql = "BIGSERIAL" if c["data_type"] == "bigint" else "SERIAL"
+        else:
+            tipo_sql = _tipo_columna_sql(c)
+
+        linea = f'    "{c["column_name"]}" {tipo_sql}'
+        if c["is_nullable"] == "NO":
+            linea += " NOT NULL"
+        if c["column_default"] is not None and not es_serial:
+            linea += f' DEFAULT {c["column_default"]}'
+        lineas.append(linea)
+
+    cur.execute("""
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        WHERE tc.table_schema = 'public' AND tc.table_name = %s
+          AND tc.constraint_type = 'PRIMARY KEY'
+        ORDER BY kcu.ordinal_position;
+    """, (tabla,))
+    pk_cols = [r["column_name"] for r in cur.fetchall()]
+    if pk_cols:
+        pk_list = ", ".join(f'"{c}"' for c in pk_cols)
+        lineas.append(f"    PRIMARY KEY ({pk_list})")
+
+    sql = f'DROP TABLE IF EXISTS "{tabla}" CASCADE;\n'
+    sql += f'CREATE TABLE "{tabla}" (\n' + ",\n".join(lineas) + "\n);\n"
+    return sql, [c["column_name"] for c in columnas]
+
+
+def _generar_inserts(cur, tabla, columnas):
+    """Genera los INSERT de todos los datos de una tabla, usando mogrify
+       (adaptación segura de valores, igual que consultas parametrizadas)."""
+    cur.execute(f'SELECT * FROM "{tabla}";')
+    filas = cur.fetchall()
+    if not filas:
+        return ""
+
+    cols_sql = ", ".join(f'"{c}"' for c in columnas)
+    partes = [f'\n-- Datos: {tabla} ({len(filas)} filas)\n']
+    for fila in filas:
+        valores = tuple(fila[c] for c in columnas)
+        insert = cur.mogrify(
+            f'INSERT INTO "{tabla}" ({cols_sql}) VALUES %s;', (valores,)
+        )
+        partes.append(insert.decode("utf-8") + "\n")
+    return "".join(partes)
+
+
+def _generar_setval_serial(cur, tabla, columnas):
+    """Para columnas SERIAL, reajusta la secuencia al máximo valor insertado
+       (si no se hace, el próximo INSERT normal choca con un ID duplicado)."""
+    sql = ""
+    for col in columnas:
+        cur.execute("SELECT pg_get_serial_sequence(%s, %s);", (tabla, col))
+        secuencia = cur.fetchone()["pg_get_serial_sequence"]
+        if secuencia:
+            sql += (
+                f"SELECT setval('{secuencia}', "
+                f'COALESCE((SELECT MAX("{col}") FROM "{tabla}"), 1), '
+                f'(SELECT MAX("{col}") FROM "{tabla}") IS NOT NULL);\n'
+            )
+    return sql
+
+
+def _generar_indices(cur, tabla):
+    """Genera CREATE INDEX para los índices de una tabla (excluye el de la
+       llave primaria, que ya se crea automáticamente con PRIMARY KEY)."""
+    cur.execute("""
+        SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = %s
+          AND indexname NOT LIKE '%%_pkey';
+    """, (tabla,))
+    sql = ""
+    for idx in cur.fetchall():
+        sql += f"{idx['indexdef']};\n"
+    return sql
+
+
+
+    """Genera CREATE VIEW para las vistas del esquema public."""
+    cur.execute("""
+        SELECT viewname, definition FROM pg_views WHERE schemaname = 'public';
+    """)
+    sql = ""
+    for v in cur.fetchall():
+        sql += f'\nDROP VIEW IF EXISTS "{v["viewname"]}" CASCADE;\n'
+        sql += f'CREATE VIEW "{v["viewname"]}" AS {v["definition"]}\n'
+    return sql
+
 
 @app.route("/api/configuracion/backup", methods=["GET"])
 @requiere_rol("administrador")
 def exportar_backup_completo():
-    """Genera un dump completo de PostgreSQL (estructura + datos) y lo
-       entrega como archivo .sql descargable directamente al navegador."""
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        return jsonify({"error": "DATABASE_URL no está configurada"}), 500
-
+    """Genera un dump completo (estructura + datos + vistas) en Python puro,
+       sin depender de pg_dump, y lo entrega como .sql descargable."""
+    conn = get_db()
+    cur = conn.cursor()
     try:
-        resultado = subprocess.run(
-            [
-                "pg_dump",
-                database_url,
-                "--no-owner",
-                "--no-privileges",
-                "--clean",
-                "--if-exists",
-            ],
-            capture_output=True,
-            check=True,
-            timeout=120,
-        )
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode("utf-8", errors="ignore")
-        return jsonify({"error": f"Error al generar el backup: {error_msg}"}), 500
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "El backup tardó demasiado tiempo en generarse"}), 500
-    except FileNotFoundError:
-        return jsonify({
-            "error": "pg_dump no está instalado en el servidor. "
-                     "Verifica que nixpacks.toml esté en la raíz del repo."
-        }), 500
+        partes = ["-- Backup completo Sistema GONZA (estructura + datos)\n"
+                   f"-- Generado: {datetime.now().isoformat()}\n\n"
+                   "BEGIN;\n"]
 
+        tablas = _tablas_publicas(cur)
+        columnas_por_tabla = {}
+        for tabla in tablas:
+            create_sql, columnas = _generar_create_table(cur, tabla)
+            partes.append(f'\n-- ═══ Tabla: {tabla} ═══\n{create_sql}')
+            columnas_por_tabla[tabla] = columnas
+
+        for tabla in tablas:
+            partes.append(_generar_inserts(cur, tabla, columnas_por_tabla[tabla]))
+
+        partes.append("\n-- Índices\n")
+        for tabla in tablas:
+            partes.append(_generar_indices(cur, tabla))
+
+        partes.append("\n-- Ajuste de secuencias (columnas SERIAL)\n")
+        for tabla in tablas:
+            partes.append(_generar_setval_serial(cur, tabla, columnas_por_tabla[tabla]))
+
+        partes.append(_generar_vistas(cur))
+        partes.append("\nCOMMIT;\n")
+    except Exception as e:
+        return jsonify({"error": f"Error al generar el backup: {str(e)}"}), 500
+    finally:
+        conn.close()
+
+    contenido = "".join(partes)
     fecha = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     nombre_archivo = f"backup_gonza_{fecha}.sql"
 
     return Response(
-        resultado.stdout,
+        contenido,
         mimetype="application/sql",
         headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
     )
@@ -1064,8 +1453,10 @@ def exportar_backup_completo():
 @app.route("/api/configuracion/restore", methods=["POST"])
 @requiere_rol("administrador")
 def restaurar_backup_completo():
-    """Restaura la base de datos completa a partir de un archivo .sql subido.
-       ⚠️ SOBRESCRIBE los datos actuales de las tablas incluidas en el dump."""
+    """Restaura la base de datos completa a partir de un .sql generado por
+       /api/configuracion/backup. Se ejecuta como una sola transacción:
+       si algo falla, no se aplica ningún cambio (rollback automático).
+       ⚠️ SOBRESCRIBE los datos actuales de las tablas incluidas en el archivo."""
     if "archivo" not in request.files:
         return jsonify({"error": "No se envió ningún archivo"}), 400
 
@@ -1075,36 +1466,60 @@ def restaurar_backup_completo():
     if not archivo.filename.lower().endswith(".sql"):
         return jsonify({"error": "El archivo debe tener extensión .sql"}), 400
 
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        return jsonify({"error": "DATABASE_URL no está configurada"}), 500
-
-    contenido = archivo.read()
-    if not contenido:
+    contenido = archivo.read().decode("utf-8", errors="strict")
+    if not contenido.strip():
         return jsonify({"error": "El archivo está vacío"}), 400
 
+    conn = get_db()
     try:
-        resultado = subprocess.run(
-            ["psql", database_url, "-v", "ON_ERROR_STOP=1"],
-            input=contenido,
-            capture_output=True,
-            timeout=180,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "La restauración tardó demasiado tiempo"}), 500
-    except FileNotFoundError:
+        cur = conn.cursor()
+        cur.execute(contenido)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
         return jsonify({
-            "error": "psql no está instalado en el servidor. "
-                     "Verifica que nixpacks.toml esté en la raíz del repo."
+            "error": "La restauración falló, no se aplicó ningún cambio (rollback automático)",
+            "detalle": str(e)
         }), 500
-
-    if resultado.returncode != 0:
-        return jsonify({
-            "error": "La restauración falló, no se completaron todos los cambios",
-            "detalle": resultado.stderr.decode("utf-8", errors="ignore")
-        }), 500
+    finally:
+        conn.close()
 
     return jsonify({"mensaje": "Base de datos restaurada correctamente"})
+
+
+@app.route("/api/dashboard/cartera", methods=["GET"])
+@requiere_lectura("consultor")
+def get_dashboard_cartera():
+    """Clasifica los préstamos activos en vencidos / próximos a vencer / al día,
+       según los días de anticipación configurados."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT valor FROM configuracion WHERE clave = 'dias_anticipacion_alerta';")
+    row = cur.fetchone()
+    dias_anticipacion = int(row["valor"]) if row else 2
+
+    cur.execute("""
+        SELECT id, deudor_nombre, monto, interes_mensual,
+               proximo_corte::text AS proximo_corte,
+               (proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos;
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    vencidos = [r for r in rows if r["dias_para_corte"] < 0]
+    proximos = [r for r in rows if 0 <= r["dias_para_corte"] <= dias_anticipacion]
+    al_dia = [r for r in rows if r["dias_para_corte"] > dias_anticipacion]
+
+    def _resumen(lista):
+        return {"cantidad": len(lista), "monto": sum(float(r["monto"] or 0) for r in lista)}
+
+    return jsonify({
+        "vencidos": vencidos,
+        "proximos": proximos,
+        "al_dia": al_dia,
+        "resumen": {"vencidos": _resumen(vencidos), "proximos": _resumen(proximos), "al_dia": _resumen(al_dia)},
+    })
 
 
 @app.route("/api/alertas", methods=["GET"])
@@ -1192,8 +1607,8 @@ def requiere_cron(f):
             return f(*args, **kwargs)
 
         # 2. Permitir si es un administrador autenticado (prueba manual desde UI)
-        username = request.headers.get("X-Username", "")
-        if username and get_rol(username) == "administrador":
+        username, error = _obtener_username_autenticado()
+        if not error and username and get_rol(username) == "administrador":
             return f(*args, **kwargs)
 
         # 3. Si CRON_SECRET no está configurado en el entorno, advertir en lugar de bloquear
@@ -1601,6 +2016,7 @@ def delete_movimiento_caja(cid, mid):
 
 
 @app.route("/api/caja/resumen", methods=["GET"])
+@requiere_lectura("consultor")
 def get_caja_resumen():
     """
     Resumen global de la caja: total acumulado real (suma de movimientos),
@@ -1621,26 +2037,26 @@ def get_caja_resumen():
     conn.close()
     return jsonify(dict(row))
 
-# ─── RUTAS: RESET DE CONTRASEÑA (acceso público) ─────────────────────────────
+# ─── RUTAS: RESET DE CONTRASEÑA (con código enviado al correo) ──────────────
+# Flujo:
+#   1. POST /api/usuarios/solicitar-reset {username}
+#      -> genera un código de 6 dígitos, lo envía al correo registrado del
+#         usuario, y devuelve un token firmado (válido 15 min) que contiene
+#         el código esperado. El código NUNCA se guarda en la base de datos.
+#   2. POST /api/usuarios/confirmar-reset {token, codigo, new_password}
+#      -> valida que el token no haya expirado y que el código coincida:
+#         solo entonces actualiza la contraseña.
 
-@app.route("/api/usuario-existe", methods=["POST"])
-def usuario_existe():
-    """
-    Verifica si un usuario existe (para el flujo de recuperación de contraseña).
-    Solo devuelve nombre y username — no expone datos sensibles.
-    """
+@app.route("/api/usuarios/solicitar-reset", methods=["POST"])
+def solicitar_reset_password():
     data = request.get_json()
-    username = data.get("username", "").strip()
+    username = (data.get("username") or "").strip()
     if not username:
         return jsonify({"error": "Username requerido"}), 400
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT u.id, u.username, u.nombre, u.activo
-        FROM usuarios u
-        WHERE u.username = %s;
-    """, (username,))
+    cur.execute("SELECT nombre, correo, activo FROM usuarios WHERE username = %s;", (username,))
     row = cur.fetchone()
     conn.close()
 
@@ -1648,37 +2064,62 @@ def usuario_existe():
         return jsonify({"error": "Usuario no encontrado"}), 404
     if not row["activo"]:
         return jsonify({"error": "Usuario inactivo"}), 403
+    if not row["correo"]:
+        return jsonify({
+            "error": "Este usuario no tiene correo registrado. "
+                     "Pide a un administrador que te agregue uno en el módulo de Usuarios."
+        }), 400
 
-    return jsonify({"username": row["username"], "nombre": row["nombre"]})
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    token = _serializer.dumps({"username": username, "codigo": codigo}, salt="reset-password")
 
-
-@app.route("/api/usuarios/reset-password", methods=["POST"])
-def reset_password():
+    cuerpo = f"""
+    <h3>Sistema GONZA — Código para restablecer tu contraseña</h3>
+    <p>Hola {row['nombre']}, tu código de verificación es:</p>
+    <p style="font-size:28px; font-weight:bold; letter-spacing:6px;">{codigo}</p>
+    <p>Este código vence en 15 minutos. Si tú no solicitaste este cambio, ignora este correo.</p>
     """
-    Restablece la contraseña de un usuario dado su username.
-    No requiere autenticación (flujo de recuperación desde login).
-    La nueva contraseña debe tener al menos 6 caracteres.
-    """
+    try:
+        enviar_correo(row["correo"], "GONZA — Código para restablecer contraseña", cuerpo)
+    except Exception as e:
+        return jsonify({"error": f"No se pudo enviar el correo: {str(e)}"}), 500
+
+    return jsonify({
+        "mensaje": f"Código enviado a {row['correo'][:3]}***",
+        "token": token,
+    })
+
+
+@app.route("/api/usuarios/confirmar-reset", methods=["POST"])
+def confirmar_reset_password():
     data = request.get_json()
-    username = data.get("username", "").strip()
+    token = data.get("token", "")
+    codigo = (data.get("codigo") or "").strip()
     new_password = data.get("new_password", "")
 
-    if not username or not new_password:
-        return jsonify({"error": "Username y nueva contraseña son requeridos"}), 400
+    if not token or not codigo or not new_password:
+        return jsonify({"error": "Faltan datos (token, código o nueva contraseña)"}), 400
     if len(new_password) < 6:
         return jsonify({"error": "La contraseña debe tener al menos 6 caracteres"}), 400
 
+    try:
+        datos = _serializer.loads(token, salt="reset-password", max_age=TOKEN_RESET_MAX_AGE)
+    except itsdangerous.SignatureExpired:
+        return jsonify({"error": "El código expiró, solicita uno nuevo"}), 400
+    except itsdangerous.BadSignature:
+        return jsonify({"error": "Token inválido, solicita un código nuevo"}), 400
+
+    if not secrets.compare_digest(datos["codigo"], codigo):
+        return jsonify({"error": "Código incorrecto"}), 400
+
+    username = datos["username"]
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT id, activo FROM usuarios WHERE username = %s;", (username,))
     row = cur.fetchone()
-
-    if not row:
+    if not row or not row["activo"]:
         conn.close()
-        return jsonify({"error": "Usuario no encontrado"}), 404
-    if not row["activo"]:
-        conn.close()
-        return jsonify({"error": "Usuario inactivo"}), 403
+        return jsonify({"error": "Usuario no encontrado o inactivo"}), 404
 
     cur.execute(
         "UPDATE usuarios SET password_hash = %s WHERE username = %s;",
@@ -1858,6 +2299,7 @@ def enviar_correo_completo():
 # ─── INFORME POR DEUDOR ───────────────────────────────────────────────────────
 
 @app.route("/api/informe-deudor/<path:nombre>", methods=["GET"])
+@requiere_lectura("consultor")
 def get_informe_deudor(nombre):
     """Informe ejecutivo completo de un deudor: préstamos, abonos, cortes de interés."""
     conn = get_db()
