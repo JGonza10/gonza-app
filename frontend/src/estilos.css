@@ -33,12 +33,9 @@
   --side-fondo:linear-gradient(180deg,rgba(22,32,47,.72),rgba(10,17,32,.4));
   --hover-fila:rgba(255,255,255,.022);
 
-  /* Rellenos de botón: los degradados son claros, así que llevan texto oscuro
-     y no necesitan cambiar entre temas. */
-  --grad:linear-gradient(180deg,#3AA5F5 0%,#1C74D4 100%);   --on-grad:#FFFFFF;
-  --grad-verde:linear-gradient(180deg,#46E08A,#1DB25C);     --on-verde:#00250F;
-  --grad-amarillo:linear-gradient(180deg,#FFE071,#F0BE1E);  --on-amarillo:#2A2000;
-  --grad-naranja:linear-gradient(180deg,#FFA366,#F0762A);   --on-naranja:#2A1200;
+  /* Usado solo por el estado activo del nav lateral (.nav button.on); los
+     botones (.btn) ahora son de contorno, sin relleno. */
+  --grad:linear-gradient(180deg,#3AA5F5 0%,#1C74D4 100%);
 
   --f:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
   --m:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
@@ -180,14 +177,18 @@ h1,h2,h3 { font-weight:800; letter-spacing:-.02em; line-height:1.15 }
 }
 .btn:hover { background:var(--raise) }
 .btn:disabled { opacity:.55; cursor:not-allowed }
-.btn.pri { background:var(--grad); border-color:transparent; color:var(--on-grad); box-shadow:0 6px 18px -8px #2E9BF0 }
-.btn.grn { background:var(--grad-verde); border-color:transparent; color:var(--on-verde) }
-.btn.yel { background:var(--grad-amarillo); border-color:transparent; color:var(--on-amarillo) }
-.btn.nar { background:var(--grad-naranja); border-color:transparent; color:var(--on-naranja) }
-.btn.dgr { color:var(--red); border-color:var(--red); background:transparent }
+.btn.pri { color:var(--blue);   border-color:var(--blue);   background:transparent }
+.btn.grn { color:var(--green);  border-color:var(--green);  background:transparent }
+.btn.yel { color:var(--yellow); border-color:var(--yellow); background:transparent }
+.btn.nar { color:var(--orange); border-color:var(--orange); background:transparent }
+.btn.dgr { color:var(--red);    border-color:var(--red);    background:transparent }
 .btn.gh  { background:transparent }
 .btn.sm  { padding:6px 10px; font-size:12px; border-radius:8px }
-.btn.pri:hover, .btn.grn:hover, .btn.yel:hover, .btn.nar:hover { filter:brightness(1.08) }
+.btn.pri:hover { background:var(--tint-blue) }
+.btn.grn:hover { background:var(--tint-green) }
+.btn.yel:hover { background:var(--tint-yellow) }
+.btn.nar:hover { background:var(--tint-orange) }
+.btn.dgr:hover { background:var(--tint-red) }
 
 .in, .sel, .ta {
   background:var(--campo); border:1px solid var(--line2); border-radius:10px;

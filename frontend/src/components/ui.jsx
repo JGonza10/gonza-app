@@ -11,7 +11,7 @@ import { C } from "../theme";
 
 export function Logo({ size = 40 }) {
   return (
-    <img src="/logo-gonza-icon.png" alt="JGM Gonzas Systems"
+    <img src="/gonza-systems.png" alt="JGM Gonzas Systems"
       style={{ width: size, height: size, objectFit: "contain", borderRadius: 8 }}/>
   );
 }
@@ -123,10 +123,9 @@ const BTN_CLASE = {
 
 export function Btn({ children, onClick, color = C.navy, small, loading, tipo, ...p }) {
   const clase = tipo || BTN_CLASE[color];
-  // App.jsx pasa dos colores hexadecimales sueltos (#6B46C1 y #8B6914) que no
-  // están en la tabla; para esos se rellena en línea y se conserva el ancho de
-  // borde para que no salten respecto a los demás botones.
-  const estilo = clase ? undefined : { background: color, borderColor: "transparent", color: "#fff" };
+  // App.jsx pasa colores hexadecimales sueltos (ej. #6B46C1, #8B6914) que no
+  // están en la tabla; para esos se arma el mismo look de contorno en línea.
+  const estilo = clase ? undefined : { background: "transparent", borderColor: color, color };
   return (
     <button {...p} onClick={onClick} disabled={loading || p.disabled}
       style={{ ...estilo, ...p.style }}

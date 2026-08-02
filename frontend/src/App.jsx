@@ -312,6 +312,26 @@ function ModPrestamos() {
     } catch (e) { toast.error(e.message); }
   }
 
+  async function handleDescargarPagare(p) {
+    try {
+      const user = sessionStorage.getItem("gonza_user");
+      const token = user ? JSON.parse(user).token : "";
+      const res = await fetch(`${API_BASE}/api/prestamos/${p.id}/pagare`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("No se pudo generar el pagaré");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pagare_${p.deudor_nombre.replace(/\s+/g, "_")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { toast.error(e.message); }
+  }
+
   if (loading) return <Cargando texto="Cargando préstamos..."/>;
 
   return (
@@ -384,6 +404,7 @@ function ModPrestamos() {
                 <Btn small color={C.orange} onClick={() => setAbonoPrestamo(p)}>$ Abonar</Btn>
                 <Btn small color={C.green} onClick={() => handlePagar(p.id)}>✓ Liquidar</Btn>
                 <Btn small onClick={() => setEditarPrestamo(p)}>✎ Editar</Btn>
+                <Btn small color={C.oxford} onClick={() => handleDescargarPagare(p)}>📄 Pagaré</Btn>
               </div>
             ];
           })}
@@ -1404,18 +1425,115 @@ function ModUsuarios() {
 }
 
 // ── MÓDULO: CONFIGURACIÓN ─────────────────────────────────────────────────────
-function ModConfiguracion() {
+const UNA_SEMANA_MS = 7 * 24 * 60 * 60 * 1000;
+
+// ── SEGURIDAD: VERIFICACIÓN EN DOS PASOS (TOTP) ──────────────────────────────
+function Config2FA() {
+  const { data: estado, loading, reload } = useApiData("/api/2fa/estado");
+  const [qr, setQr] = useState(null);
+  const [codigo, setCodigo] = useState("");
+  const [generando, setGenerando] = useState(false);
+  const [activando, setActivando] = useState(false);
+  const [mostrarDesactivar, setMostrarDesactivar] = useState(false);
+  const [password, setPassword] = useState("");
+  const [desactivando, setDesactivando] = useState(false);
+
+  async function handleGenerar() {
+    setGenerando(true);
+    try { setQr(await api("/api/2fa/generar", { method: "POST" })); }
+    catch (e) { toast.error(e.message); }
+    finally { setGenerando(false); }
+  }
+
+  async function handleActivar() {
+    if (codigo.length !== 6) return toast.error("Ingresa el código de 6 dígitos de tu app de autenticación");
+    setActivando(true);
+    try {
+      await api("/api/2fa/activar", { method: "POST", body: JSON.stringify({ codigo }) });
+      toast.success("Verificación en dos pasos activada");
+      setQr(null); setCodigo("");
+      reload();
+    } catch (e) { toast.error(e.message); }
+    finally { setActivando(false); }
+  }
+
+  async function handleDesactivar() {
+    if (!password) return toast.error("Ingresa tu contraseña actual");
+    setDesactivando(true);
+    try {
+      await api("/api/2fa/desactivar", { method: "POST", body: JSON.stringify({ password }) });
+      toast.success("Verificación en dos pasos desactivada");
+      setMostrarDesactivar(false); setPassword("");
+      reload();
+    } catch (e) { toast.error(e.message); }
+    finally { setDesactivando(false); }
+  }
+
+  if (loading) return null;
+
+  return (
+    <Card style={{ padding: 13 }}>
+      <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.navy }}>🔒 Verificación en dos pasos</p>
+      <p style={{ margin: "0 0 10px", fontSize: 11, color: C.oxford, lineHeight: 1.5 }}>
+        Protege tu cuenta de administrador con un código adicional generado por una app como Google Authenticator o Authy.
+      </p>
+
+      {estado.habilitado ? (
+        <>
+          <Badge color={C.green} bg={C.greenLight}>✓ Activa</Badge>
+          {!mostrarDesactivar
+            ? <div style={{ marginTop: 10 }}><Btn small color={C.red} onClick={() => setMostrarDesactivar(true)}>Desactivar</Btn></div>
+            : (
+              <div style={{ marginTop: 10 }}>
+                <Inp label="Confirma tu contraseña para desactivar" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"/>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Btn small color={C.red} onClick={handleDesactivar} loading={desactivando}>Confirmar</Btn>
+                  <Btn small color={C.oxford} onClick={() => { setMostrarDesactivar(false); setPassword(""); }}>Cancelar</Btn>
+                </div>
+              </div>
+            )}
+        </>
+      ) : !qr ? (
+        <Btn small color={C.navy} onClick={handleGenerar} loading={generando}>Activar verificación en dos pasos</Btn>
+      ) : (
+        <div>
+          <p style={{ margin: "0 0 8px", fontSize: 11, color: C.oxford }}>
+            Escanea este código con tu app de autenticación, o ingresa la clave manualmente:
+          </p>
+          <img src={qr.qr} alt="Código QR para 2FA" style={{ width: 160, height: 160, display: "block", margin: "0 auto 8px" }}/>
+          <p style={{ textAlign: "center", fontFamily: "monospace", fontSize: 12, color: C.navy, marginBottom: 10, wordBreak: "break-all" }}>{qr.secreto}</p>
+          <Inp label="Código de 6 dígitos" value={codigo} onChange={e => setCodigo(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="123456"/>
+          <Btn small color={C.green} onClick={handleActivar} loading={activando}>Confirmar y activar</Btn>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ModConfiguracion({ rol }) {
   const confirm = useConfirm();
   const [dias, setDias] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingCorreo, setSavingCorreo] = useState(false);
+  const [enviandoWhatsapp, setEnviandoWhatsapp] = useState(false);
   const [msg, setMsg] = useState("");
   const [formatoBackup, setFormatoBackup] = useState("xlsx");
   const [exportando, setExportando] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
-  const { data: historial, error: errorHistorial } = useApiData("/api/historial-accesos");
+  const [verClientes, setVerClientes] = useState(false);
+  const [verUsuarios, setVerUsuarios] = useState(false);
+  const { data: historial, error: errorHistorial, reload: reloadHistorial } = useApiData("/api/historial-accesos");
   const { itemsPagina: historialPagina, Paginador: PaginadorHistorial } = usePaginacion(historial, 20);
+
+  // El historial de accesos se refresca solo una vez por semana mientras la
+  // pantalla siga abierta (no hace falta más seguido: es un registro de
+  // auditoría, no algo que cambie minuto a minuto).
+  useEffect(() => {
+    if (rol !== "administrador") return;
+    const timer = setInterval(reloadHistorial, UNA_SEMANA_MS);
+    return () => clearInterval(timer);
+  }, [rol, reloadHistorial]);
 
   useEffect(() => {
     api("/api/configuracion/dias_anticipacion")
@@ -1459,6 +1577,20 @@ function ModConfiguracion() {
       toast.success(lineas.join("\n"), { style: { whiteSpace: "pre-line" }, duration: 6000 });
     } catch (e) { toast.error("Error al enviar: " + e.message); }
     finally { setSavingCorreo(false); }
+  }
+
+  // Envía un recordatorio de WhatsApp directo a cada deudor con un corte próximo a vencer
+  async function handleEnviarWhatsapp() {
+    if (!(await confirm("¿Enviar recordatorio de WhatsApp ahora a los deudores con corte próximo a vencer?"))) return;
+    setEnviandoWhatsapp(true);
+    try {
+      const res = await api("/api/alertas/enviar-whatsapp", { method: "POST" });
+      const errores = res.errores || [];
+      const lineas = [`✅ Enviados: ${res.enviados ?? 0} de ${res.alertas ?? 0} alerta(s)`];
+      if (errores.length) lineas.push("⚠️ " + errores.join(" · "));
+      toast.success(lineas.join("\n"), { style: { whiteSpace: "pre-line" }, duration: 7000 });
+    } catch (e) { toast.error("Error al enviar: " + e.message); }
+    finally { setEnviandoWhatsapp(false); }
   }
 
   // Descarga un dump completo (estructura + datos) directo desde Railway
@@ -1528,15 +1660,41 @@ function ModConfiguracion() {
 
   if (loading) return <Cargando texto="Cargando configuración..."/>;
 
+  const tarjetaChica = { padding: 13 };
+  const tituloChico = { margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.navy };
+  const textoChico = { margin: "0 0 10px", fontSize: 11, color: C.oxford, lineHeight: 1.5 };
+
   return (
     <div>
       <SectionTitle>Configuración del sistema</SectionTitle>
+
+      {/* Accesos a Clientes y Usuarios — se abren en popup, ya no son pestañas del menú */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+        <Card onClick={() => setVerClientes(true)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 24 }}>👥</span>
+          <div>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.navy }}>Clientes</p>
+            <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Directorio, altas y edición</p>
+          </div>
+        </Card>
+        {rol === "administrador" && (
+          <Card onClick={() => setVerUsuarios(true)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 24 }}>🔐</span>
+            <div>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.navy }}>Usuarios</p>
+              <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Cuentas y roles del sistema</p>
+            </div>
+          </Card>
+        )}
+      </div>
+
+      {rol === "administrador" && (
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
 
         {/* Alertas — días de anticipación */}
-        <Card>
-          <p style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: C.navy }}>⚙️ Alertas de réditos</p>
-          <p style={{ margin: "0 0 14px", fontSize: 12, color: C.oxford, lineHeight: 1.6 }}>
+        <Card style={tarjetaChica}>
+          <p style={tituloChico}>⚙️ Alertas de réditos</p>
+          <p style={textoChico}>
             Define con cuántos días de anticipación aparecen las alertas de cobro de interés mensual en el sistema y en los correos.
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "end" }}>
@@ -1555,9 +1713,9 @@ function ModConfiguracion() {
         </Card>
 
         {/* Correo combinado */}
-        <Card>
-          <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: C.navy }}>📧 Envío de correos</p>
-          <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford, lineHeight: 1.6 }}>
+        <Card style={tarjetaChica}>
+          <p style={tituloChico}>📧 Envío de correos</p>
+          <p style={textoChico}>
             Los correos de alerta se envían automáticamente cada día a las <b>8:00 AM</b> (cron job). También puedes enviarlos manualmente ahora.
           </p>
 
@@ -1581,9 +1739,14 @@ function ModConfiguracion() {
           </div>
 
           {/* Botón principal */}
-          <Btn color={C.navy} onClick={handleEnviarCorreoCombinado} loading={savingCorreo}>
-            📨 Enviar correo completo ahora
-          </Btn>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn color={C.navy} onClick={handleEnviarCorreoCombinado} loading={savingCorreo}>
+              📨 Enviar correo completo ahora
+            </Btn>
+            <Btn color={C.green} onClick={handleEnviarWhatsapp} loading={enviandoWhatsapp}>
+              💬 Recordatorio por WhatsApp
+            </Btn>
+          </div>
 
           {/* Detalle de lo que incluye */}
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1605,9 +1768,9 @@ function ModConfiguracion() {
         </Card>
 
         {/* Backup y restauración completa de la base de datos */}
-        <Card>
-          <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: C.navy }}>🗄️ Base de datos (estructura + datos)</p>
-          <p style={{ margin: "0 0 14px", fontSize: 12, color: C.oxford, lineHeight: 1.6 }}>
+        <Card style={tarjetaChica}>
+          <p style={tituloChico}>🗄️ Base de datos (estructura + datos)</p>
+          <p style={textoChico}>
             Descarga un respaldo total de PostgreSQL (tablas, índices, vistas y todos los datos), o restaura el sistema a partir de un archivo <b>.sql</b> generado previamente.
           </p>
 
@@ -1639,12 +1802,14 @@ function ModConfiguracion() {
           </div>
         </Card>
 
+        <Config2FA/>
+
         {/* Historial de accesos — solo visible para administrador (el backend ya lo protege también) */}
         {!errorHistorial && historial.length > 0 && (
-          <Card>
-            <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 700, color: C.navy }}>🕵️ Historial de accesos</p>
-            <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
-              Últimos {historial.length} intentos de inicio de sesión (exitosos y fallidos), con IP de origen.
+          <Card style={tarjetaChica}>
+            <p style={tituloChico}>🕵️ Historial de accesos</p>
+            <p style={{ ...textoChico, marginBottom: 12 }}>
+              Últimos {historial.length} intentos de inicio de sesión (exitosos y fallidos), con IP de origen. Se actualiza solo cada semana.
             </p>
             <div>
               <Tabla
@@ -1663,6 +1828,18 @@ function ModConfiguracion() {
           </Card>
         )}
       </div>
+      )}
+
+      {verClientes && (
+        <Modal titulo="👥 Clientes" onClose={() => setVerClientes(false)}>
+          <ModClientes/>
+        </Modal>
+      )}
+      {verUsuarios && (
+        <Modal titulo="🔐 Usuarios" onClose={() => setVerUsuarios(false)}>
+          <ModUsuarios/>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1794,6 +1971,8 @@ function ModalResetPassword({ onClose }) {
 function Login({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [pide2fa, setPide2fa] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showReset, setShowReset] = useState(false);
@@ -1805,10 +1984,14 @@ function Login({ onLogin }) {
       const res = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, totp_code: totpCode }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data.error || "Error al iniciar sesión"); return; }
+      if (!res.ok) {
+        setError(data.error || "Error al iniciar sesión");
+        if (data.requiere_2fa) setPide2fa(true);
+        return;
+      }
       onLogin(data);
     } catch (e2) { setError("No se pudo conectar con el servidor"); }
     finally { setLoading(false); }
@@ -1822,10 +2005,15 @@ function Login({ onLogin }) {
           <div style={{ fontSize: 11, color: C.oxford, letterSpacing: 1, textTransform: "uppercase", marginTop: 10, textAlign: "center" }}>Sistema de administración de pagos</div>
         </div>
         <form onSubmit={handleSubmit}>
-          <Inp label="Usuario" value={username} onChange={e => setUsername(e.target.value)} placeholder="usuario" autoFocus/>
-          <Inp label="Contraseña" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"/>
+          <Inp label="Usuario" value={username} onChange={e => setUsername(e.target.value)} placeholder="usuario" autoFocus disabled={pide2fa}/>
+          <Inp label="Contraseña" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" disabled={pide2fa}/>
+          {pide2fa && (
+            <Inp label="Código de verificación (2FA)" value={totpCode}
+              onChange={e => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="123456" autoFocus/>
+          )}
           {error && <div style={{ background: C.redLight, color: C.red, fontSize: 12, padding: "7px 10px", borderRadius: 8, marginBottom: 10 }}>{error}</div>}
-          <Btn color={C.orange} loading={loading}>Iniciar sesión</Btn>
+          <Btn color={C.orange} loading={loading}>{pide2fa ? "Verificar" : "Iniciar sesión"}</Btn>
         </form>
         {/* NUEVO: enlace olvidé mi contraseña */}
         <div style={{ textAlign: "center", marginTop: 14 }}>
@@ -1841,14 +2029,12 @@ function Login({ onLogin }) {
 
 // ── MENÚ Y APP PRINCIPAL ──────────────────────────────────────────────────────
 const MENU = [
-  { id: "resumen",     label: "Resumen",          icon: "📊" },
-  { id: "clientes",   label: "Clientes",          icon: "👥" },
   { id: "prestamos",  label: "Préstamos",         icon: "💼" },
-  { id: "ahorro",     label: "Ahorro",            icon: "🏦" },
   { id: "caja",       label: "Caja",              icon: "💰" },
+  { id: "ahorro",     label: "Ahorro",            icon: "🏦" },
+  { id: "resumen",    label: "Resumen",           icon: "📊" },
   { id: "plazos",     label: "Pagos a plazos",    icon: "📅" },
-  { id: "usuarios",   label: "Usuarios",          icon: "🔐", soloAdmin: true },
-  { id: "config",     label: "Configuración",     icon: "⚙️",  soloAdmin: true },
+  { id: "config",     label: "Configuración",     icon: "⚙️" },
 ];
 
 function BuscadorGlobal({ irA }) {
@@ -2010,13 +2196,11 @@ export default function App() {
       </nav>
       <main style={{ padding: "20px 22px", overflowY: "auto", minHeight: "calc(100vh - 100px)" }}>
         {sec === "resumen"   && <ModResumen irA={setSec}/>}
-        {sec === "clientes"  && <ModClientes/>}
         {sec === "prestamos" && <ModPrestamos/>}
         {sec === "ahorro"    && <ModAhorro/>}
         {sec === "caja"      && <ModCaja/>}
         {sec === "plazos"    && <ModPagosPlazos/>}
-        {sec === "usuarios"  && <ModUsuarios/>}
-        {sec === "config"    && <ModConfiguracion/>}
+        {sec === "config"    && <ModConfiguracion rol={user.rol}/>}
       </main>
     </div>
     </ConfirmProvider>
