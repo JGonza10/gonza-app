@@ -962,7 +962,13 @@ function ModPagosPlazos() {
               }
               const pend = p.meses_total - p.meses_pagados;
               const rest = (p.costo||0) - (p.abonado||0);
-              const pct = p.meses_total ? Math.round((p.meses_pagados/p.meses_total)*100) : 0;
+              // El avance se calcula sobre el dinero (abonado/costo), la misma
+              // base que ya se muestra en las columnas Abonado/Restante — así
+              // la barra nunca queda inconsistente con esos números aunque se
+              // edite el abonado o el costo sin tocar meses_pagados.
+              const pct = p.costo > 0
+                ? Math.round((parseFloat(p.abonado || 0) / parseFloat(p.costo)) * 100)
+                : (p.meses_total ? Math.round((p.meses_pagados / p.meses_total) * 100) : 0);
               return [
                 p.material, fmt(p.costo), p.meses_total, p.meses_pagados, pend, fmt(p.cuota), fmt(p.abonado), fmt(rest),
                 <div key={`bar${p.id}`} style={{display:"flex",alignItems:"center",gap:4}}>
@@ -992,8 +998,8 @@ function ModPagosPlazos() {
 }
 
 // ── MODAL: INFORME POR DEUDOR ─────────────────────────────────────────────────
-function ModalInformeDeudor({ nombre, onClose }) {
-  const { data, loading, error } = useApiData(`/api/informe-deudor/${encodeURIComponent(nombre)}`);
+function ModalInformeDeudor({ clienteId, onClose }) {
+  const { data, loading, error } = useApiData(`/api/clientes/${clienteId}/informe-deudor`);
   const [descargando, setDescargando] = useState(false);
 
   async function handleDescargarPDF() {
@@ -1001,7 +1007,7 @@ function ModalInformeDeudor({ nombre, onClose }) {
     try {
       const user = sessionStorage.getItem("gonza_user");
       const token = user ? JSON.parse(user).token : "";
-      const res = await fetch(`${API_BASE}/api/informe-deudor/${encodeURIComponent(nombre)}/pdf`, {
+      const res = await fetch(`${API_BASE}/api/clientes/${clienteId}/informe-deudor/pdf`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("No se pudo generar el PDF");
@@ -1009,7 +1015,7 @@ function ModalInformeDeudor({ nombre, onClose }) {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `informe_${nombre.replace(/\s+/g, "_")}.pdf`;
+      a.download = `informe_${(data?.deudor || "deudor").replace(/\s+/g, "_")}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1026,7 +1032,7 @@ function ModalInformeDeudor({ nombre, onClose }) {
   };
 
   return (
-    <Modal titulo="📋 Informe de deudor" sub={nombre} onClose={onClose}
+    <Modal titulo="📋 Informe de deudor" sub={data?.deudor} onClose={onClose}
       acciones={<Btn small color={C.orange} onClick={handleDescargarPDF} loading={descargando}>📄 Descargar PDF</Btn>}>
         {loading && <Cargando texto="Cargando informe..."/>}
         {error && <p style={{ color: C.red }}>Error: {error}</p>}
@@ -1128,10 +1134,20 @@ function ModResumen({ irA }) {
   const totalCaja           = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
   const interesAnualCaja    = totalCaja * 0.08;
 
-  // Top deudores por capital activo
+  // Top deudores por capital activo. Se agrupa por cliente_id (no por
+  // deudor_nombre): ese campo es una foto del nombre al crear cada préstamo,
+  // así que si el cliente se editó entre un préstamo y otro, dos préstamos
+  // del mismo deudor podían tener cadenas distintas y agruparse por separado.
   const porDeudor = {};
-  activos.forEach(p => { porDeudor[p.deudor_nombre] = (porDeudor[p.deudor_nombre] || 0) + parseFloat(p.monto); });
-  const topDeudores = Object.entries(porDeudor).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  activos.forEach(p => {
+    const acc = porDeudor[p.cliente_id] || { nombre: p.deudor_nombre, total: 0 };
+    acc.total += parseFloat(p.monto);
+    porDeudor[p.cliente_id] = acc;
+  });
+  const topDeudores = Object.entries(porDeudor)
+    .map(([clienteId, v]) => [Number(clienteId), v.nombre, v.total])
+    .sort((a, b) => b[2] - a[2])
+    .slice(0, 5);
 
   // Datos para gráfica de distribución (pie)
   const datosDistribucion = [
@@ -1273,15 +1289,15 @@ function ModResumen({ irA }) {
         <Card>
           <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Ranking de deudores</p>
           <p style={{ margin: "0 0 12px", fontSize: 10, color: C.oxford }}>Haz clic en un nombre para ver su informe individual</p>
-          {topDeudores.map(([nombre, monto], i) => {
-            const maxM = topDeudores[0][1] || 1;
+          {topDeudores.map(([clienteId, nombre, monto], i) => {
+            const maxM = topDeudores[0][2] || 1;
             // Interés pendiente de este deudor
             const pendiente = resumenIntereses
-              .filter(r => r.deudor_nombre === nombre)
+              .filter(r => r.cliente_id === clienteId)
               .reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
             return (
-              <div key={nombre} style={{ marginBottom: 12, cursor: "pointer", borderRadius: 8, padding: "8px 10px", background: C.lightGray, border: `1px solid ${C.border}` }}
-                onClick={() => setDeudorModal(nombre)}>
+              <div key={clienteId} style={{ marginBottom: 12, cursor: "pointer", borderRadius: 8, padding: "8px 10px", background: C.lightGray, border: `1px solid ${C.border}` }}
+                onClick={() => setDeudorModal(clienteId)}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
                   <span style={{ fontWeight: 700, color: C.navy }}>{i+1}. {nombre}</span>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1318,7 +1334,7 @@ function ModResumen({ irA }) {
       </div>
 
       {deudorModal && (
-        <ModalInformeDeudor nombre={deudorModal} onClose={() => setDeudorModal(null)}/>
+        <ModalInformeDeudor clienteId={deudorModal} onClose={() => setDeudorModal(null)}/>
       )}
     </div>
   );
@@ -1510,7 +1526,7 @@ function Config2FA() {
   );
 }
 
-function ModConfiguracion({ rol }) {
+function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVerUsuarios }) {
   const confirm = useConfirm();
   const [dias, setDias] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1521,8 +1537,6 @@ function ModConfiguracion({ rol }) {
   const [formatoBackup, setFormatoBackup] = useState("xlsx");
   const [exportando, setExportando] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
-  const [verClientes, setVerClientes] = useState(false);
-  const [verUsuarios, setVerUsuarios] = useState(false);
   const { data: historial, error: errorHistorial, reload: reloadHistorial } = useApiData("/api/historial-accesos");
   const { itemsPagina: historialPagina, Paginador: PaginadorHistorial } = usePaginacion(historial, 20);
 
@@ -1829,17 +1843,6 @@ function ModConfiguracion({ rol }) {
         )}
       </div>
       )}
-
-      {verClientes && (
-        <Modal titulo="👥 Clientes" onClose={() => setVerClientes(false)}>
-          <ModClientes/>
-        </Modal>
-      )}
-      {verUsuarios && (
-        <Modal titulo="🔐 Usuarios" onClose={() => setVerUsuarios(false)}>
-          <ModUsuarios/>
-        </Modal>
-      )}
     </div>
   );
 }
@@ -2037,7 +2040,7 @@ const MENU = [
   { id: "config",     label: "Configuración",     icon: "⚙️" },
 ];
 
-function BuscadorGlobal({ irA }) {
+function BuscadorGlobal({ onVerDeudor }) {
   const [q, setQ] = useState("");
   const [resultados, setResultados] = useState(null);
   const [abierto, setAbierto] = useState(false);
@@ -2069,7 +2072,7 @@ function BuscadorGlobal({ irA }) {
             <div>
               <p style={{ margin: 0, padding: "6px 10px", fontSize: 10, fontWeight: 700, color: C.oxford, background: C.lightGray }}>CLIENTES</p>
               {resultados.clientes.map(c => (
-                <div key={c.id} onMouseDown={() => { irA("clientes"); setAbierto(false); setQ(""); }}
+                <div key={c.id} onMouseDown={() => { onVerDeudor(c.id); setAbierto(false); setQ(""); }}
                   style={{ padding: "8px 10px", fontSize: 12, cursor: "pointer", borderBottom: `1px solid ${C.border}`, color: C.oxford }}>
                   {c.nombre} {c.apellido_pat} — {c.telefono || "sin teléfono"}
                 </div>
@@ -2080,7 +2083,7 @@ function BuscadorGlobal({ irA }) {
             <div>
               <p style={{ margin: 0, padding: "6px 10px", fontSize: 10, fontWeight: 700, color: C.oxford, background: C.lightGray }}>PRÉSTAMOS</p>
               {resultados.prestamos.map(p => (
-                <div key={p.id} onMouseDown={() => { irA("prestamos"); setAbierto(false); setQ(""); }}
+                <div key={p.id} onMouseDown={() => { onVerDeudor(p.cliente_id); setAbierto(false); setQ(""); }}
                   style={{ padding: "8px 10px", fontSize: 12, cursor: "pointer", borderBottom: `1px solid ${C.border}`, color: C.oxford }}>
                   {p.deudor_nombre} — {fmt(p.monto)} {p.pagado ? "(pagado)" : ""}
                 </div>
@@ -2103,6 +2106,12 @@ export default function App() {
     const saved = sessionStorage.getItem("gonza_user");
     return saved ? JSON.parse(saved) : null;
   });
+  // Clientes/Usuarios se muestran como popup desde cualquier sección (el botón
+  // dentro de Configuración y los resultados del buscador global comparten
+  // este mismo estado), y ya no son pestañas propias del menú.
+  const [verClientes, setVerClientes] = useState(false);
+  const [verUsuarios, setVerUsuarios] = useState(false);
+  const [deudorGlobal, setDeudorGlobal] = useState(null);
 
   // ── TEMA (oscuro por defecto) ────────────────────────────────────────────
   // Ya no mutamos el objeto C. Cada clave de C apunta a una variable CSS y el
@@ -2164,7 +2173,7 @@ export default function App() {
           <div style={{ fontSize: 11, fontWeight: 700, color: "#a0b8d8", letterSpacing: 0.5, lineHeight: 1.1 }}>Gonzas <span style={{ color: C.orange }}>systems</span></div>
         </div>
         <div style={{ flex: 1 }}/>
-        <BuscadorGlobal irA={setSec}/>
+        <BuscadorGlobal onVerDeudor={setDeudorGlobal}/>
         <div style={{ textAlign: "right", marginRight: 14 }}>
           <div style={{ fontSize: 12, color: C.white, fontWeight: 700 }}>{user.nombre}</div>
           <div style={{ fontSize: 10, color: C.gold, textTransform: "uppercase" }}>{user.rol}</div>
@@ -2200,8 +2209,26 @@ export default function App() {
         {sec === "ahorro"    && <ModAhorro/>}
         {sec === "caja"      && <ModCaja/>}
         {sec === "plazos"    && <ModPagosPlazos/>}
-        {sec === "config"    && <ModConfiguracion rol={user.rol}/>}
+        {sec === "config"    && (
+          <ModConfiguracion rol={user.rol}
+            verClientes={verClientes} setVerClientes={setVerClientes}
+            verUsuarios={verUsuarios} setVerUsuarios={setVerUsuarios}/>
+        )}
       </main>
+
+      {verClientes && (
+        <Modal titulo="👥 Clientes" ancho={1100} onClose={() => setVerClientes(false)}>
+          <ModClientes/>
+        </Modal>
+      )}
+      {verUsuarios && (
+        <Modal titulo="🔐 Usuarios" ancho={1100} onClose={() => setVerUsuarios(false)}>
+          <ModUsuarios/>
+        </Modal>
+      )}
+      {deudorGlobal && (
+        <ModalInformeDeudor clienteId={deudorGlobal} onClose={() => setDeudorGlobal(null)}/>
+      )}
     </div>
     </ConfirmProvider>
   );

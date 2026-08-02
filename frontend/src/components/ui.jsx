@@ -172,11 +172,11 @@ export function Tabla({ headers, rows, empty = "Sin registros" }) {
 // Reemplaza los overlays hechos a mano dentro de App.jsx. Cierra con Escape
 // y con clic en el fondo.
 
-export function Modal({ titulo, sub, onClose, children, acciones }) {
+export function Modal({ titulo, sub, onClose, children, acciones, ancho }) {
   return (
     <div className="ov" onClick={e => e.target === e.currentTarget && onClose?.()}
       role="dialog" aria-modal="true" aria-label={titulo}>
-      <div className="md">
+      <div className="md" style={ancho ? { maxWidth: ancho } : undefined}>
         <header>
           <h3>{titulo}</h3>
           {sub && <span className="sub">{sub}</span>}

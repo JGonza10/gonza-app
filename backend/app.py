@@ -587,7 +587,7 @@ def buscar_global():
     clientes = cur.fetchall()
 
     cur.execute("""
-        SELECT id, deudor_nombre, monto, pagado
+        SELECT id, cliente_id, deudor_nombre, monto, pagado
         FROM prestamos
         WHERE eliminado_en IS NULL AND deudor_nombre ILIKE %s
         ORDER BY fecha_prestamo DESC
@@ -978,6 +978,7 @@ def get_resumen_intereses_pendientes():
     cur.execute("""
         SELECT
             p.id                        AS prestamo_id,
+            p.cliente_id,
             p.deudor_nombre,
             p.monto,
             p.interes_mensual,
@@ -989,7 +990,7 @@ def get_resumen_intereses_pendientes():
         FROM prestamos p
         LEFT JOIN cortes_interes ci ON ci.prestamo_id = p.id
         WHERE p.pagado = FALSE AND p.monto > 0 AND p.eliminado_en IS NULL
-        GROUP BY p.id, p.deudor_nombre, p.monto, p.interes_mensual, p.fecha_prestamo
+        GROUP BY p.id, p.cliente_id, p.deudor_nombre, p.monto, p.interes_mensual, p.fecha_prestamo
         ORDER BY total_interes_pendiente DESC;
     """)
     rows = cur.fetchall()
@@ -2711,11 +2712,22 @@ def enviar_correo_completo():
 
 # ─── INFORME POR DEUDOR ───────────────────────────────────────────────────────
 
-def _datos_informe_deudor(nombre):
-    """Consulta y arma los datos del informe de un deudor.
+def _datos_informe_deudor(cliente_id):
+    """Consulta y arma los datos del informe de un deudor a partir de su
+       cliente_id (NO de deudor_nombre: ese campo es una foto del nombre al
+       momento de crear cada préstamo, así que si el cliente se editó entre
+       un préstamo y otro, dos préstamos del mismo deudor pueden tener
+       cadenas distintas y un match por texto se perdía alguno).
        Reutilizada por la vista JSON (para la pantalla) y la vista PDF (para descargar)."""
     conn = get_db()
     cur = conn.cursor()
+
+    cur.execute("SELECT nombre, apellido_pat, apellido_mat FROM clientes WHERE id = %s;", (cliente_id,))
+    cliente = cur.fetchone()
+    nombre_actual = (
+        f"{cliente['nombre']} {cliente['apellido_pat']} {cliente['apellido_mat'] or ''}".strip()
+        if cliente else "Cliente no encontrado"
+    )
 
     # Todos los préstamos del deudor
     cur.execute("""
@@ -2726,9 +2738,9 @@ def _datos_informe_deudor(nombre):
                tp.nombre AS tipo_pago
         FROM prestamos p
         LEFT JOIN tipos_pago tp ON p.tipo_pago_id = tp.id
-        WHERE LOWER(p.deudor_nombre) = LOWER(%s) AND p.eliminado_en IS NULL
+        WHERE p.cliente_id = %s AND p.eliminado_en IS NULL
         ORDER BY p.fecha_prestamo DESC;
-    """, (nombre,))
+    """, (cliente_id,))
     prestamos = [dict(r) for r in cur.fetchall()]
 
     ids = [p["id"] for p in prestamos]
@@ -2770,7 +2782,7 @@ def _datos_informe_deudor(nombre):
     total_cobrado     = sum(float(c["monto_pagado"] or 0) for c in cortes)
 
     return {
-        "deudor": nombre,
+        "deudor": nombre_actual,
         "prestamos": prestamos,
         "cortes": cortes,
         "abonos": abonos,
@@ -2785,11 +2797,11 @@ def _datos_informe_deudor(nombre):
     }
 
 
-@app.route("/api/informe-deudor/<path:nombre>", methods=["GET"])
+@app.route("/api/clientes/<int:cliente_id>/informe-deudor", methods=["GET"])
 @requiere_lectura("consultor")
-def get_informe_deudor(nombre):
+def get_informe_deudor(cliente_id):
     """Informe ejecutivo completo de un deudor: préstamos, abonos, cortes de interés."""
-    return jsonify(_datos_informe_deudor(nombre))
+    return jsonify(_datos_informe_deudor(cliente_id))
 
 
 def _generar_pdf_informe(datos):
@@ -2920,13 +2932,13 @@ def _generar_pdf_informe(datos):
     return pdf_bytes
 
 
-@app.route("/api/informe-deudor/<path:nombre>/pdf", methods=["GET"])
+@app.route("/api/clientes/<int:cliente_id>/informe-deudor/pdf", methods=["GET"])
 @requiere_lectura("consultor")
-def get_informe_deudor_pdf(nombre):
+def get_informe_deudor_pdf(cliente_id):
     """Descarga el informe ejecutivo del deudor como PDF con el membrete de la empresa."""
-    datos = _datos_informe_deudor(nombre)
+    datos = _datos_informe_deudor(cliente_id)
     pdf_bytes = _generar_pdf_informe(datos)
-    archivo = f"informe_{nombre.strip().replace(' ', '_')}_{date.today().isoformat()}.pdf"
+    archivo = f"informe_{datos['deudor'].strip().replace(' ', '_')}_{date.today().isoformat()}.pdf"
     return Response(
         pdf_bytes,
         mimetype="application/pdf",

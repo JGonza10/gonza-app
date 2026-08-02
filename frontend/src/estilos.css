@@ -239,7 +239,7 @@ h1,h2,h3 { font-weight:800; letter-spacing:-.02em; line-height:1.15 }
 .md header { display:flex; align-items:center; gap:12px; padding:18px 20px; border-bottom:1px solid var(--line) }
 .md header h3 { font-size:19px; flex:1 }
 .md header .sub { font-family:var(--m); font-size:11px; color:var(--muted) }
-.md .bdy { padding:20px }
+.md .bdy { padding:20px; overflow-x:auto }
 .md footer {
   display:flex; gap:10px; justify-content:flex-end; padding:15px 20px;
   border-top:1px solid var(--line); position:sticky; bottom:0;
