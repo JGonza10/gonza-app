@@ -19,7 +19,7 @@ export function Logo({ size = 40 }) {
 export function LogoLogin() {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <img src="/logo-gonza-login.jpg" alt="JGM Gonzas Systems"
+      <img src="/login.png" alt="JGM Gonzas Systems"
         style={{ width: 220, maxWidth: "100%", objectFit: "contain" }}/>
     </div>
   );

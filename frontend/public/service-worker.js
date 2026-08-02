@@ -11,14 +11,14 @@
 // IMPORTANTE: sube CACHE_NAME (v1 -> v2 -> v3...) cada vez que cambies esta estrategia, para que
 // los navegadores con la versión vieja del service worker instalada limpien su caché al activarse.
 
-const CACHE_NAME = "gonza-cache-v2";
+const CACHE_NAME = "gonza-cache-v3";
 
 const STATIC_ASSETS = [
   "/",
   "/index.html",
   "/manifest.json",
   "/logo-gonza-icon.png",
-  "/logo-gonza-login.jpg",
+  "/login.png",
 ];
 
 // Instalación: precachea el shell de la app
