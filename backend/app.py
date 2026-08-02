@@ -17,13 +17,37 @@ import psycopg2.extras
 import itsdangerous
 from datetime import date, datetime, time
 from decimal import Decimal
+from functools import wraps
 from flask import Flask, jsonify, request, Response, g
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.security import check_password_hash, generate_password_hash
 import requests as http_requests
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
+
+# ─── LÍMITE DE PETICIONES ─────────────────────────────────────────────────────
+# Protección básica contra abuso/fuerza bruta a nivel de API completa. El login
+# ya tiene su propio bloqueo por usuario (ver _cuenta_bloqueada); esto cubre el
+# resto de rutas y pone un límite más estricto en las de acceso/recuperación.
+# Nota: usa memoria en proceso (sin Redis), suficiente para un solo servidor
+# pequeño; con varios workers cada uno lleva su propio conteo.
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per hour"],
+    storage_uri="memory://",
+)
+
+
+@app.route("/api/health", methods=["GET"])
+@limiter.exempt
+def health():
+    """Endpoint de monitoreo (Railway/uptime). No requiere sesión ni cuenta
+       para el límite de peticiones."""
+    return jsonify({"status": "ok"})
 
 # ─── TOKENS DE SESIÓN FIRMADOS ────────────────────────────────────────────────
 # Reemplaza el header "X-Username" (que cualquiera podía falsificar) por un
@@ -119,13 +143,50 @@ def _asegurar_tablas_auxiliares():
             CREATE INDEX IF NOT EXISTS idx_historial_accesos_username_fecha
             ON historial_accesos (username, fecha DESC);
         """)
+
+        # Borrado suave: las tablas financieras nunca se borran físicamente,
+        # solo se marcan con eliminado_en. Así un borrado por error siempre
+        # se puede recuperar, y queda registro de cuándo se "eliminó".
+        for tabla in TABLAS_CON_BORRADO_SUAVE:
+            cur.execute(f'ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS eliminado_en TIMESTAMP;')
+
+        # Auditoría: quién creó/editó/eliminó qué registro y cuándo.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS auditoria (
+                id SERIAL PRIMARY KEY,
+                tabla VARCHAR(50) NOT NULL,
+                registro_id INTEGER NOT NULL,
+                accion VARCHAR(20) NOT NULL,
+                usuario VARCHAR(100),
+                detalle JSONB,
+                fecha TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auditoria_tabla_registro
+            ON auditoria (tabla, registro_id, fecha DESC);
+        """)
         conn.commit()
         conn.close()
     except Exception as e:
         app.logger.warning(f"No se pudo verificar/crear tablas auxiliares: {e}")
 
 
+# Tablas financieras con borrado suave (columna eliminado_en) en vez de DELETE físico.
+TABLAS_CON_BORRADO_SUAVE = ("prestamos", "clientes", "ahorros", "caja", "pagos_plazos", "caja_movimientos")
+
 _asegurar_tablas_auxiliares()
+
+
+def _registrar_auditoria(cur, tabla, registro_id, accion, detalle=None):
+    """Inserta un renglón de auditoría usando el cursor/transacción de la
+       petición actual, para que quede atómico con el cambio que describe.
+       accion: "crear" | "editar" | "eliminar"."""
+    username, _ = _obtener_username_autenticado()
+    cur.execute(
+        "INSERT INTO auditoria (tabla, registro_id, accion, usuario, detalle) VALUES (%s, %s, %s, %s, %s);",
+        (tabla, registro_id, accion, username, psycopg2.extras.Json(detalle) if detalle is not None else None),
+    )
 
 INTENTOS_MAXIMOS = 5
 VENTANA_BLOQUEO_MINUTOS = 15
@@ -166,6 +227,7 @@ def _cuenta_bloqueada(username):
 
 
 @app.route("/api/login", methods=["POST"])
+@limiter.limit("15 per minute")
 def login():
     """Verifica usuario y contraseña, devuelve datos del usuario y su rol."""
     data = request.get_json()
@@ -235,7 +297,6 @@ def requiere_rol(*roles_permitidos):
     """Decorador: bloquea la ruta si el token de sesión no es válido o el
        usuario no tiene uno de los roles permitidos."""
     def decorador(f):
-        from functools import wraps
         @wraps(f)
         def envoltura(*args, **kwargs):
             username, error = _obtener_username_autenticado()
@@ -258,7 +319,6 @@ def requiere_lectura(*roles_extra):
        y además los roles indicados en roles_extra (ej. 'consultor').
        Requiere sesión válida siempre (ya no permite acceso sin token)."""
     def decorador(f):
-        from functools import wraps
         @wraps(f)
         def envoltura(*args, **kwargs):
             username, error = _obtener_username_autenticado()
@@ -403,7 +463,8 @@ def buscar_global():
     cur.execute("""
         SELECT id, nombre, apellido_pat, apellido_mat, telefono
         FROM clientes
-        WHERE nombre ILIKE %s OR apellido_pat ILIKE %s OR apellido_mat ILIKE %s OR telefono ILIKE %s
+        WHERE eliminado_en IS NULL
+          AND (nombre ILIKE %s OR apellido_pat ILIKE %s OR apellido_mat ILIKE %s OR telefono ILIKE %s)
         ORDER BY nombre
         LIMIT 15;
     """, (patron, patron, patron, patron))
@@ -412,7 +473,7 @@ def buscar_global():
     cur.execute("""
         SELECT id, deudor_nombre, monto, pagado
         FROM prestamos
-        WHERE deudor_nombre ILIKE %s
+        WHERE eliminado_en IS NULL AND deudor_nombre ILIKE %s
         ORDER BY fecha_prestamo DESC
         LIMIT 15;
     """, (patron,))
@@ -438,13 +499,13 @@ def get_historial_completo_cliente(cid):
 
     cur.execute("""
         SELECT id, deudor_nombre, monto, interes_mensual, fecha_prestamo::text AS fecha_prestamo, pagado
-        FROM prestamos WHERE cliente_id = %s ORDER BY fecha_prestamo DESC;
+        FROM prestamos WHERE cliente_id = %s AND eliminado_en IS NULL ORDER BY fecha_prestamo DESC;
     """, (cid,))
     prestamos = cur.fetchall()
 
     cur.execute("""
         SELECT id, cantidad, fecha::text AS fecha, nota
-        FROM ahorros WHERE cliente_id = %s ORDER BY fecha DESC;
+        FROM ahorros WHERE cliente_id = %s AND eliminado_en IS NULL ORDER BY fecha DESC;
     """, (cid,))
     ahorros = cur.fetchall()
 
@@ -453,7 +514,7 @@ def get_historial_completo_cliente(cid):
                COALESCE(SUM(cm.monto), 0) AS capital
         FROM caja c
         LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id
-        WHERE c.cliente_id = %s
+        WHERE c.cliente_id = %s AND c.eliminado_en IS NULL
         GROUP BY c.id, c.fecha, c.nota
         ORDER BY c.fecha DESC;
     """, (cid,))
@@ -484,6 +545,7 @@ def get_prestamos():
                (SELECT MAX(pp.fecha_pago) FROM pagos_prestamo pp
                  WHERE pp.prestamo_id = p.id AND pp.monto_capital > 0) AS fecha_abono_capital
         FROM prestamos p
+        WHERE p.eliminado_en IS NULL
         ORDER BY p.fecha_prestamo ASC;
     """)
     rows = cur.fetchall()
@@ -520,6 +582,7 @@ def add_prestamo():
         data.get("nota", "")
     ))
     nuevo_id = cur.fetchone()["id"]
+    _registrar_auditoria(cur, "prestamos", nuevo_id, "crear", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id, "mensaje": "Préstamo registrado"}), 201
@@ -545,6 +608,7 @@ def update_prestamo(pid):
 
     valores.append(pid)
     cur.execute(f"UPDATE prestamos SET {', '.join(campos)} WHERE id = %s;", valores)
+    _registrar_auditoria(cur, "prestamos", pid, "editar", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Préstamo actualizado"})
@@ -554,8 +618,8 @@ def update_prestamo(pid):
 def delete_prestamo(pid):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("DELETE FROM pagos_prestamo WHERE prestamo_id = %s;", (pid,))
-    cur.execute("DELETE FROM prestamos WHERE id = %s;", (pid,))
+    cur.execute("UPDATE prestamos SET eliminado_en = NOW() WHERE id = %s;", (pid,))
+    _registrar_auditoria(cur, "prestamos", pid, "eliminar")
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Préstamo eliminado"})
@@ -787,7 +851,7 @@ def get_resumen_intereses_pendientes():
     cur.execute("""
         SELECT id, fecha_prestamo, interes_mensual
         FROM prestamos
-        WHERE pagado = FALSE AND interes_mensual > 0;
+        WHERE pagado = FALSE AND interes_mensual > 0 AND eliminado_en IS NULL;
     """)
     prestamos = cur.fetchall()
     for p in prestamos:
@@ -807,7 +871,7 @@ def get_resumen_intereses_pendientes():
             COALESCE(SUM(ci.monto_pagado),  0)            AS total_interes_cobrado
         FROM prestamos p
         LEFT JOIN cortes_interes ci ON ci.prestamo_id = p.id
-        WHERE p.pagado = FALSE AND p.monto > 0
+        WHERE p.pagado = FALSE AND p.monto > 0 AND p.eliminado_en IS NULL
         GROUP BY p.id, p.deudor_nombre, p.monto, p.interes_mensual, p.fecha_prestamo
         ORDER BY total_interes_pendiente DESC;
     """)
@@ -822,7 +886,7 @@ def get_resumen_intereses_pendientes():
 def get_clientes():
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM clientes ORDER BY apellido_pat, nombre;")
+    cur.execute("SELECT * FROM clientes WHERE eliminado_en IS NULL ORDER BY apellido_pat, nombre;")
     rows = cur.fetchall()
     conn.close()
     return jsonify(list(rows))
@@ -842,6 +906,7 @@ def add_cliente():
         data.get("apellido_mat", ""), data.get("telefono", ""), data.get("direccion", "")
     ))
     nuevo_id = cur.fetchone()["id"]
+    _registrar_auditoria(cur, "clientes", nuevo_id, "crear", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id}), 201
@@ -867,6 +932,7 @@ def update_cliente(cid):
 
     valores.append(cid)
     cur.execute(f"UPDATE clientes SET {', '.join(campos)} WHERE id = %s;", valores)
+    _registrar_auditoria(cur, "clientes", cid, "editar", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Cliente actualizado"})
@@ -874,19 +940,13 @@ def update_cliente(cid):
 @app.route("/api/clientes/<int:cid>", methods=["DELETE"])
 @requiere_rol("administrador", "analista")
 def delete_cliente(cid):
-    """Elimina un cliente. Si tiene registros relacionados, sugiere desactivar en su lugar."""
+    """Borrado suave: el cliente y su historial (préstamos, ahorros, caja)
+       quedan intactos, solo se ocultan de las listas."""
     conn = get_db()
     cur = conn.cursor()
-    try:
-        cur.execute("DELETE FROM clientes WHERE id = %s;", (cid,))
-        conn.commit()
-    except psycopg2.errors.ForeignKeyViolation:
-        conn.rollback()
-        conn.close()
-        return jsonify({
-            "error": "No se puede eliminar: el cliente tiene préstamos, ahorros o registros de caja asociados. "
-                     "Puedes desactivarlo en su lugar."
-        }), 400
+    cur.execute("UPDATE clientes SET eliminado_en = NOW() WHERE id = %s;", (cid,))
+    _registrar_auditoria(cur, "clientes", cid, "eliminar")
+    conn.commit()
     conn.close()
     return jsonify({"mensaje": "Cliente eliminado"})
 
@@ -901,6 +961,7 @@ def get_ahorros():
         SELECT a.id, a.cliente_id, c.nombre, c.apellido_pat, c.apellido_mat,
                a.cantidad, a.fecha, a.nota, a.activo
         FROM ahorros a JOIN clientes c ON a.cliente_id = c.id
+        WHERE a.eliminado_en IS NULL
         ORDER BY c.apellido_pat;
     """)
     rows = cur.fetchall()
@@ -930,6 +991,7 @@ def add_ahorro():
             data.get("nota", ""),
         ))
         nuevo_id = cur.fetchone()["id"]
+        _registrar_auditoria(cur, "ahorros", nuevo_id, "crear", detalle=data)
         conn.commit()
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
@@ -959,6 +1021,7 @@ def update_ahorro(aid):
 
     valores.append(aid)
     cur.execute(f"UPDATE ahorros SET {', '.join(campos)} WHERE id = %s;", valores)
+    _registrar_auditoria(cur, "ahorros", aid, "editar", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Ahorro actualizado"})
@@ -968,7 +1031,8 @@ def update_ahorro(aid):
 def delete_ahorro(aid):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("DELETE FROM ahorros WHERE id = %s;", (aid,))
+    cur.execute("UPDATE ahorros SET eliminado_en = NOW() WHERE id = %s;", (aid,))
+    _registrar_auditoria(cur, "ahorros", aid, "eliminar")
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Registro de ahorro eliminado"})
@@ -982,7 +1046,8 @@ def get_clientes_sin_ahorro():
     cur.execute("""
         SELECT c.id, c.nombre, c.apellido_pat, c.apellido_mat
         FROM clientes c
-        WHERE c.id NOT IN (SELECT cliente_id FROM ahorros)
+        WHERE c.eliminado_en IS NULL
+          AND c.id NOT IN (SELECT cliente_id FROM ahorros WHERE eliminado_en IS NULL)
         ORDER BY c.apellido_pat;
     """)
     rows = cur.fetchall()
@@ -1006,7 +1071,8 @@ def get_caja():
                c.fecha, c.nota, c.activo,
                COALESCE(SUM(cm.monto), 0) AS capital
         FROM caja c
-        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id
+        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id AND cm.eliminado_en IS NULL
+        WHERE c.eliminado_en IS NULL
         GROUP BY c.id, c.participante, c.cliente_id, c.cuota, c.fecha_inicio,
                  c.fecha, c.nota, c.activo
         ORDER BY c.id;
@@ -1053,6 +1119,7 @@ def add_caja():
             VALUES (%s, %s, %s, %s);
         """, (nuevo_id, data.get("fecha_inicio") or date.today().isoformat(), capital_inicial, "Capital inicial"))
 
+    _registrar_auditoria(cur, "caja", nuevo_id, "crear", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id}), 201
@@ -1077,6 +1144,7 @@ def update_caja(cid):
 
     valores.append(cid)
     cur.execute(f"UPDATE caja SET {', '.join(campos)} WHERE id = %s;", valores)
+    _registrar_auditoria(cur, "caja", cid, "editar", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Actualizado"})
@@ -1086,7 +1154,8 @@ def update_caja(cid):
 def delete_caja(cid):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("DELETE FROM caja WHERE id = %s;", (cid,))
+    cur.execute("UPDATE caja SET eliminado_en = NOW() WHERE id = %s;", (cid,))
+    _registrar_auditoria(cur, "caja", cid, "eliminar")
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Eliminado"})
@@ -1098,7 +1167,7 @@ def delete_caja(cid):
 def get_plazos():
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM pagos_plazos ORDER BY id;")
+    cur.execute("SELECT * FROM pagos_plazos WHERE eliminado_en IS NULL ORDER BY id;")
     rows = cur.fetchall()
     conn.close()
     return jsonify(list(rows))
@@ -1122,6 +1191,7 @@ def add_plazo():
         data.get("abonado", 0),
     ))
     nuevo_id = cur.fetchone()["id"]
+    _registrar_auditoria(cur, "pagos_plazos", nuevo_id, "crear", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"id": nuevo_id}), 201
@@ -1146,6 +1216,7 @@ def update_plazo(pid):
 
     valores.append(pid)
     cur.execute(f"UPDATE pagos_plazos SET {', '.join(campos)} WHERE id = %s;", valores)
+    _registrar_auditoria(cur, "pagos_plazos", pid, "editar", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Actualizado"})
@@ -1155,7 +1226,8 @@ def update_plazo(pid):
 def delete_plazo(pid):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("DELETE FROM pagos_plazos WHERE id = %s;", (pid,))
+    cur.execute("UPDATE pagos_plazos SET eliminado_en = NOW() WHERE id = %s;", (pid,))
+    _registrar_auditoria(cur, "pagos_plazos", pid, "eliminar")
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Eliminado"})
@@ -1202,14 +1274,14 @@ def get_mis_datos():
     cliente = cur.fetchone()
 
     cur.execute("""
-        SELECT * FROM prestamos WHERE cliente_id = %s ORDER BY fecha_prestamo ASC;
+        SELECT * FROM prestamos WHERE cliente_id = %s AND eliminado_en IS NULL ORDER BY fecha_prestamo ASC;
     """, (cliente_id,))
     prestamos = cur.fetchall()
 
-    cur.execute("SELECT * FROM ahorros WHERE cliente_id = %s;", (cliente_id,))
+    cur.execute("SELECT * FROM ahorros WHERE cliente_id = %s AND eliminado_en IS NULL;", (cliente_id,))
     ahorro = cur.fetchone()
 
-    cur.execute("SELECT * FROM caja WHERE cliente_id = %s;", (cliente_id,))
+    cur.execute("SELECT * FROM caja WHERE cliente_id = %s AND eliminado_en IS NULL;", (cliente_id,))
     caja = cur.fetchall()
 
     conn.close()
@@ -1233,7 +1305,7 @@ def get_dias_anticipacion():
 
 @app.route("/api/configuracion/dias_anticipacion", methods=["PATCH"])
 @requiere_rol("administrador")
-def set_dias_anticipacion(data=None):
+def set_dias_anticipacion():
     data = request.get_json()
     conn = get_db()
     cur = conn.cursor()
@@ -1390,7 +1462,7 @@ def _generar_indices(cur, tabla):
     return sql
 
 
-
+def _generar_vistas(cur):
     """Genera CREATE VIEW para las vistas del esquema public."""
     cur.execute("""
         SELECT viewname, definition FROM pg_views WHERE schemaname = 'public';
@@ -1636,7 +1708,6 @@ def requiere_cron(f):
     """Decorador: permite la petición solo si el header X-Cron-Secret coincide
        con la variable de entorno CRON_SECRET.
        También acepta llamadas de un administrador autenticado (pruebas manuales)."""
-    from functools import wraps
     @wraps(f)
     def envoltura(*args, **kwargs):
         cron_secret = os.environ.get("CRON_SECRET", "")
@@ -1872,7 +1943,7 @@ def enviar_informe_resumen():
 
     cur.execute("""
         SELECT deudor_nombre, SUM(monto) AS total
-        FROM prestamos WHERE pagado = FALSE AND monto > 0
+        FROM prestamos WHERE pagado = FALSE AND monto > 0 AND eliminado_en IS NULL
         GROUP BY deudor_nombre ORDER BY total DESC LIMIT 5;
     """)
     top_deudores = cur.fetchall()
@@ -1933,8 +2004,6 @@ def get_resumen():
     conn.close()
     return jsonify(dict(resumen))
 
-# ─── INICIO ───────────────────────────────────────────────────────────────────
-
 # ─── RUTAS: MOVIMIENTOS DE CAJA ───────────────────────────────────────────────
 
 @app.route("/api/caja/<int:cid>/movimientos", methods=["GET"])
@@ -1957,7 +2026,7 @@ def get_movimientos_caja(cid):
             )                   AS acumulado,
             nota
         FROM caja_movimientos
-        WHERE caja_id = %s
+        WHERE caja_id = %s AND eliminado_en IS NULL
         ORDER BY fecha, id;
     """, (cid,))
     rows = cur.fetchall()
@@ -1998,6 +2067,7 @@ def add_movimiento_caja(cid):
         data.get("nota", ""),
     ))
     nuevo_id = cur.fetchone()["id"]
+    _registrar_auditoria(cur, "caja_movimientos", nuevo_id, "crear", detalle=data)
 
     conn.commit()
     conn.close()
@@ -2033,6 +2103,7 @@ def update_movimiento_caja(cid, mid):
         conn.close()
         return jsonify({"error": "Movimiento no encontrado"}), 404
 
+    _registrar_auditoria(cur, "caja_movimientos", mid, "editar", detalle=data)
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Movimiento actualizado"})
@@ -2045,11 +2116,12 @@ def delete_movimiento_caja(cid, mid):
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("DELETE FROM caja_movimientos WHERE id = %s AND caja_id = %s RETURNING id;", (mid, cid))
+    cur.execute("UPDATE caja_movimientos SET eliminado_en = NOW() WHERE id = %s AND caja_id = %s RETURNING id;", (mid, cid))
     if not cur.fetchone():
         conn.close()
         return jsonify({"error": "Movimiento no encontrado"}), 404
 
+    _registrar_auditoria(cur, "caja_movimientos", mid, "eliminar")
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Movimiento eliminado"})
@@ -2071,7 +2143,8 @@ def get_caja_resumen():
             COALESCE(SUM(cm.monto) * 0.04, 0)                 AS total_interes,
             COALESCE(SUM(cm.monto) * 1.04, 0)                 AS total_a_entregar
         FROM caja c
-        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id;
+        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id AND cm.eliminado_en IS NULL
+        WHERE c.eliminado_en IS NULL;
     """)
     row = cur.fetchone()
     conn.close()
@@ -2088,6 +2161,7 @@ def get_caja_resumen():
 #         solo entonces actualiza la contraseña.
 
 @app.route("/api/usuarios/solicitar-reset", methods=["POST"])
+@limiter.limit("5 per minute")
 def solicitar_reset_password():
     data = request.get_json()
     username = (data.get("username") or "").strip()
@@ -2131,6 +2205,7 @@ def solicitar_reset_password():
 
 
 @app.route("/api/usuarios/confirmar-reset", methods=["POST"])
+@limiter.limit("10 per minute")
 def confirmar_reset_password():
     data = request.get_json()
     token = data.get("token", "")
@@ -2319,7 +2394,7 @@ def enviar_correo_completo():
 
     cur.execute("""
         SELECT deudor_nombre, SUM(monto) AS total
-        FROM prestamos WHERE pagado = FALSE AND monto > 0
+        FROM prestamos WHERE pagado = FALSE AND monto > 0 AND eliminado_en IS NULL
         GROUP BY deudor_nombre ORDER BY total DESC LIMIT 5;
     """)
     top_deudores = cur.fetchall()
@@ -2371,7 +2446,6 @@ def enviar_correo_completo():
     """
 
     # ── Cuerpo final ──────────────────────────────────────────────────────────
-    from datetime import date
     cuerpo = f"""
     <div style="font-family:sans-serif;max-width:680px;margin:0 auto">
       <div style="background:#0B1F4B;padding:18px 24px;border-radius:8px 8px 0 0">
@@ -2431,7 +2505,7 @@ def _datos_informe_deudor(nombre):
                tp.nombre AS tipo_pago
         FROM prestamos p
         LEFT JOIN tipos_pago tp ON p.tipo_pago_id = tp.id
-        WHERE LOWER(p.deudor_nombre) = LOWER(%s)
+        WHERE LOWER(p.deudor_nombre) = LOWER(%s) AND p.eliminado_en IS NULL
         ORDER BY p.fecha_prestamo DESC;
     """, (nombre,))
     prestamos = [dict(r) for r in cur.fetchall()]
