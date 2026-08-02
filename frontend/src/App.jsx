@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import toast, { Toaster } from "react-hot-toast";
 
-import { C, paletaClara, paletaOscura, fmt, fmtFecha, today, calcularInteresMensual, calcularCuotaMensual } from "./theme";
+import { C, temaGuardado, aplicarTema, hex, fmt, fmtFecha, today, calcularInteresMensual, calcularCuotaMensual } from "./theme";
 import { api, useApiData, usePaginacion, ConfirmProvider, useConfirm } from "./api";
 import { Logo, LogoLogin, Card, SectionTitle, Badge, Inp, Sel, Btn, Tabla } from "./components/ui";
 
@@ -1213,22 +1213,22 @@ function ModResumen({ irA }) {
 
   // Datos para gráfica de distribución (pie)
   const datosDistribucion = [
-    { name: "Cartera activa", value: totalCartera,  color: C.navy },
-    { name: "Ahorros grupo",  value: totalAhorros,  color: C.green },
-    { name: "Caja de ahorro", value: totalCaja,     color: C.orange },
+    { name: "Cartera activa", value: totalCartera,  color: hex(C.navy) },
+    { name: "Ahorros grupo",  value: totalAhorros,  color: hex(C.green) },
+    { name: "Caja de ahorro", value: totalCaja,     color: hex(C.orange) },
   ].filter(d => d.value > 0);
 
   // Datos para gráfica de intereses (donut)
   const datosIntereses = [
-    { name: "Cobrado", value: resumenIntereses.reduce((a,r) => a + parseFloat(r.total_interes_cobrado||0), 0), color: C.green },
-    { name: "Pendiente", value: totalInteresNoCobrado, color: C.red },
+    { name: "Cobrado", value: resumenIntereses.reduce((a,r) => a + parseFloat(r.total_interes_cobrado||0), 0), color: hex(C.green) },
+    { name: "Pendiente", value: totalInteresNoCobrado, color: hex(C.red) },
   ].filter(d => d.value > 0);
 
   // Datos para gráfica de cartera: vencida vs próxima a vencer vs al día
   const datosCartera = [
-    { name: "Vencida", value: cartera.resumen.vencidos.monto, color: C.red },
-    { name: "Próxima a vencer", value: cartera.resumen.proximos.monto, color: C.orange },
-    { name: "Al día", value: cartera.resumen.al_dia.monto, color: C.green },
+    { name: "Vencida", value: cartera.resumen.vencidos.monto, color: hex(C.red) },
+    { name: "Próxima a vencer", value: cartera.resumen.proximos.monto, color: hex(C.orange) },
+    { name: "Al día", value: cartera.resumen.al_dia.monto, color: hex(C.green) },
   ].filter(d => d.value > 0);
 
   const RADIAN = Math.PI / 180;
@@ -1349,13 +1349,13 @@ function ModResumen({ irA }) {
               "Interés cobrado": parseFloat(m.interes_cobrado || 0),
               "Capital cobrado": parseFloat(m.capital_cobrado || 0),
             }))}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+              <CartesianGrid strokeDasharray="3 3" stroke={hex(C.border)}/>
               <XAxis dataKey="mes" tick={{ fontSize: 11, fill: C.oxford }}/>
               <YAxis tick={{ fontSize: 11, fill: C.oxford }}/>
               <Tooltip formatter={v => fmt(v)}/>
               <Legend wrapperStyle={{ fontSize: 12 }}/>
-              <Bar dataKey="Interés cobrado" fill={C.gold} radius={[4,4,0,0]}/>
-              <Bar dataKey="Capital cobrado" fill={C.navy} radius={[4,4,0,0]}/>
+              <Bar dataKey="Interés cobrado" fill={hex(C.gold)} radius={[4,4,0,0]}/>
+              <Bar dataKey="Capital cobrado" fill={hex(C.navy)} radius={[4,4,0,0]}/>
             </BarChart>
           </ResponsiveContainer>
         </Card>
@@ -2044,21 +2044,14 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  // ── MODO OSCURO ──────────────────────────────────────────────────────────
-  // C es un objeto compartido por TODA la app (cientos de componentes leen
-  // C.navy, C.oxford, etc. directo). En vez de pasar el tema por props o
-  // contexto a cada uno de esos componentes, mutamos las propiedades del
-  // MISMO objeto C con Object.assign. Como ningún componente de este archivo
-  // usa React.memo, cualquier cambio de estado en App() vuelve a ejecutar el
-  // árbol completo de componentes hijos, y cada uno lee los valores de C ya
-  // actualizados en ese re-render. Es un atajo intencional: barato y seguro
-  // aquí porque no hay memoización de por medio.
-  const [tema, setTema] = useState(() => localStorage.getItem("gonza_tema") || "claro");
+  // ── TEMA (oscuro por defecto) ────────────────────────────────────────────
+  // Ya no mutamos el objeto C. Cada clave de C apunta a una variable CSS y el
+  // tema se cambia poniendo data-tema en <html>; el navegador recalcula todo,
+  // incluidos los elementos que se estilizan por clase (.pnl, .btn, .tbl...).
+  // Efecto secundario positivo: ahora puedes usar React.memo sin romper nada.
+  const [tema, setTema] = useState(temaGuardado);
 
-  useEffect(() => {
-    Object.assign(C, tema === "oscuro" ? paletaOscura : paletaClara);
-    localStorage.setItem("gonza_tema", tema);
-  }, [tema]);
+  useEffect(() => { aplicarTema(tema); }, [tema]);
 
   function toggleTema() {
     setTema(t => (t === "claro" ? "oscuro" : "claro"));

@@ -1,33 +1,101 @@
-// theme.js — Paleta de colores (claro/oscuro), fórmulas financieras y helpers de formato.
-// C es un objeto MUTABLE a propósito: App.jsx cambia sus propiedades con Object.assign()
-// al alternar el tema, y como es el mismo objeto en memoria, todos los archivos que lo
-// importan ven el cambio automáticamente (así funciona el modo oscuro sin pasar el tema
-// por props a cada componente).
+// theme.js — Sistema GONZA
+//
+// CAMBIO IMPORTANTE respecto a la versión anterior:
+// C ya NO es un objeto mutable con hexadecimales. Ahora cada clave devuelve una
+// variable CSS (definida en estilos.css). El tema se cambia poniendo el atributo
+// data-tema en <html>, no reasignando propiedades de C.
+//
+// Beneficios:
+//   · Desaparece el hack de Object.assign(C, ...) y su dependencia frágil de que
+//     ningún componente use React.memo. Ya puedes memoizar libremente.
+//   · El cambio de tema es instantáneo y aplica también a los elementos que se
+//     estilizan por clase CSS (.pnl, .btn, .tbl…), no solo a los estilos inline.
+//   · Las transiciones entre temas las maneja el navegador.
+//
+// Las 18 claves originales se conservan con el MISMO nombre, así que las 380+
+// referencias existentes en App.jsx siguen funcionando sin tocarlas.
 
 export const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 export const C = {
-  navy:"#0B1F4B", gold:"#C9A84C", orange:"#E87722", oxford:"#3B3B4F",
-  white:"#FFFFFF", lightGray:"#F4F4F6", border:"#D4D4DC",
-  goldLight:"#F5EDD3", navyLight:"#E8EDF5", orangeLight:"#FEF0E3",
-  red:"#D93025", green:"#1A7F3C", redLight:"#FDE8E8", greenLight:"#E6F4EC",
-  headerBg:"#0B1F4B", cardBg:"#FFFFFF", navBg:"#3B3B4F", rowAlt:"#F4F4F6",
+  // ── Claves heredadas (no renombrar: App.jsx depende de ellas) ─────────────
+  navy:        "var(--text)",       // color de texto principal / marca
+  gold:        "var(--yellow)",     // acento
+  orange:      "var(--orange)",
+  oxford:      "var(--muted)",      // texto secundario
+  white:       "#FFFFFF",
+  lightGray:   "var(--bg)",         // fondo de página
+  border:      "var(--line)",
+  goldLight:   "var(--tint-yellow)",
+  navyLight:   "var(--tint-blue)",
+  orangeLight: "var(--tint-orange)",
+  red:         "var(--red)",
+  green:       "var(--green)",
+  redLight:    "var(--tint-red)",
+  greenLight:  "var(--tint-green)",
+  headerBg:    "var(--panel)",
+  cardBg:      "var(--panel)",
+  navBg:       "var(--panel2)",
+  rowAlt:      "var(--panel2)",
+
+  // ── Claves nuevas del sistema Chicos Wheels ───────────────────────────────
+  blue:   "var(--blue)",
+  blue2:  "var(--blue2)",
+  cyan:   "var(--cyan)",
+  yellow: "var(--yellow)",
+  purple: "var(--purple)",
+  panel:  "var(--panel)",
+  panel2: "var(--panel2)",
+  raise:  "var(--raise)",
+  line:   "var(--line)",
+  line2:  "var(--line2)",
+  muted:  "var(--muted)",
+  muted2: "var(--muted2)",
+  campo:  "var(--campo)",
+  grad:   "var(--grad)",
+  mono:   "var(--m)",
 };
 
-// Paleta oscura — mismos nombres de clave (misma forma), valores distintos.
-// Cada combinación texto/fondo fue verificada con la fórmula de contraste WCAG
-// (relación mínima 4.5:1 para texto normal). headerBg se queda igual en ambos
-// temas a propósito: la barra superior siempre es azul marino oscuro.
+// Compatibilidad: App.jsx todavía importa estas dos y las pasa a Object.assign.
+// Ahora son idénticas a C, así que ese Object.assign es inofensivo (no rompe
+// nada aunque no lo hayas quitado todavía). Cuando actualices App.jsx puedes
+// borrar los tres exports y el import correspondiente.
 export const paletaClara = { ...C };
-export const paletaOscura = {
-  navy:"#E8ECF5", gold:"#C9A84C", orange:"#E87722", oxford:"#B8BDD4",
-  white:"#FFFFFF", lightGray:"#10162A", border:"#2E3A5C",
-  goldLight:"#3A331A", navyLight:"#1E2A4D", orangeLight:"#3D2313",
-  red:"#F87171", green:"#4ADE80", redLight:"#3D1717", greenLight:"#123420",
-  headerBg:"#0B1F4B", cardBg:"#1E2748", navBg:"#3B3B4F", rowAlt:"#161D38",
-};
+export const paletaOscura = { ...C };
 
-// ── HELPERS DE FORMATO ───────────────────────────────────────────────────────
+/**
+ * Aplica el tema. Llamar desde App.jsx en lugar de Object.assign(C, ...).
+ * @param {"claro"|"oscuro"} tema
+ */
+export function aplicarTema(tema) {
+  document.documentElement.setAttribute("data-tema", tema);
+  localStorage.setItem("gonza_tema", tema);
+  // La barra de estado del móvil (PWA) también cambia
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", tema === "claro" ? "#F2F5FA" : "#0A1120");
+}
+
+export const temaGuardado = () => localStorage.getItem("gonza_tema") || "oscuro";
+
+/**
+ * Resuelve una variable CSS a su hexadecimal real.
+ *
+ * OJO — esto es necesario para recharts: los atributos de presentación SVG
+ * (fill, stroke) no resuelven var() de forma confiable en todos los navegadores.
+ * Donde hoy escribes  <Bar fill={C.green}/>  cámbialo por  <Bar fill={hex(C.green)}/>.
+ */
+export function hex(varCss) {
+  if (typeof varCss !== "string" || !varCss.startsWith("var(")) return varCss;
+  const nombre = varCss.slice(4, -1).trim();
+  const valor = getComputedStyle(document.documentElement).getPropertyValue(nombre);
+  return valor.trim() || "#888";
+}
+
+// Paleta fija para series de gráficas (recharts). Hexadecimales literales
+// porque van directo a atributos SVG y deben verse bien en ambos temas.
+export const SERIES = ["#2E9BF0", "#FFD84D", "#2ED573", "#A78BFA", "#FF8A3D", "#38D6F0", "#FF4B4B"];
+
+// ── HELPERS DE FORMATO (sin cambios) ─────────────────────────────────────────
 export const fmt = n => n == null ? "—" :
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(n);
 
@@ -42,7 +110,7 @@ export const fmtFecha = f => {
 
 export const today = new Date().toISOString().split("T")[0];
 
-// ── FÓRMULAS FINANCIERAS (con tests, ver App.test.js) ────────────────────────
+// ── FÓRMULAS FINANCIERAS (sin cambios, ver App.test.js) ──────────────────────
 // Tasa de interés mensual sobre préstamos: 10%
 export const TASA_INTERES_MENSUAL = 0.10;
 
