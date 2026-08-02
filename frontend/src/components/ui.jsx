@@ -16,17 +16,6 @@ export function Logo({ size = 40 }) {
   );
 }
 
-// Logotipo tipográfico para la barra lateral: el punto en amarillo es el mismo
-// recurso que usa .logo i en Chicos Wheels.
-export function LogoTexto() {
-  return (
-    <div className="logo">
-      JGM<i>.</i>Gonza
-      <small>SYSTEMS</small>
-    </div>
-  );
-}
-
 export function LogoLogin() {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -52,9 +41,6 @@ export function Card({ children, style, onClick }) {
   );
 }
 
-// Alias con nombre del sistema nuevo; Card se conserva por compatibilidad.
-export const Panel = Card;
-
 export function SectionTitle({ children }) {
   return (
     <div className="sec">
@@ -62,20 +48,6 @@ export function SectionTitle({ children }) {
       <div className="ln"/>
     </div>
   );
-}
-
-export function Vacio({ titulo = "Sin registros", texto, children }) {
-  return (
-    <div className="empty">
-      <h3>{titulo}</h3>
-      {texto && <p style={{ fontSize: 13 }}>{texto}</p>}
-      {children && <div style={{ marginTop: 16 }}>{children}</div>}
-    </div>
-  );
-}
-
-export function Nota({ children, tipo }) {
-  return <div className={`note${tipo ? " " + tipo : ""}`}>{children}</div>;
 }
 
 /* ── KPI: la pieza con borde luminoso ──────────────────────────────────────── */
@@ -115,15 +87,13 @@ export function Badge({ children, color = C.navy, bg = C.navyLight, tono }) {
   return <span className="tag" style={{ color, background: bg, borderColor: "transparent" }}>{children}</span>;
 }
 
-export const Tag = Badge;
-
 /* ── CONTROLES DE FORMULARIO ───────────────────────────────────────────────── */
 
 export function Inp({ label, ...p }) {
   return (
     <div className="fld">
       {label && <label className="lbl">{label}</label>}
-      <input {...p} className="in" style={p.style}/>
+      <input {...p} className="in"/>
     </div>
   );
 }
@@ -133,15 +103,6 @@ export function Sel({ label, children, ...p }) {
     <div className="fld">
       {label && <label className="lbl">{label}</label>}
       <select {...p} className="sel">{children}</select>
-    </div>
-  );
-}
-
-export function Ta({ label, ...p }) {
-  return (
-    <div className="fld">
-      {label && <label className="lbl">{label}</label>}
-      <textarea {...p} className="ta" rows={p.rows || 3}/>
     </div>
   );
 }

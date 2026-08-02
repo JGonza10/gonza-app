@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import toast, { Toaster } from "react-hot-toast";
 
-import { C, temaGuardado, aplicarTema, hex, fmt, fmtFecha, today, calcularInteresMensual, calcularCuotaMensual } from "./theme";
+import { C, API_BASE, temaGuardado, aplicarTema, hex, fmt, fmtFecha, today, calcularInteresMensual, calcularCuotaMensual } from "./theme";
 import { api, useApiData, usePaginacion, ConfirmProvider, useConfirm } from "./api";
-import { Logo, LogoLogin, Card, SectionTitle, Badge, Inp, Sel, Btn, Tabla } from "./components/ui";
+import { Logo, LogoLogin, Card, SectionTitle, Badge, Inp, Sel, Btn, Tabla, Kpi, Kpis, Modal, Cargando } from "./components/ui";
 
 // ── MÓDULO: PRÉSTAMOS ─────────────────────────────────────────────────────────
 function ModalAbono({ prestamo, onClose, onSaved }) {
@@ -32,29 +32,26 @@ function ModalAbono({ prestamo, onClose, onSaved }) {
   }
 
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <Card style={{ width: 440, maxHeight: "85vh", overflowY: "auto" }}>
-        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: C.navy }}>Abono — {prestamo.deudor_nombre}</p>
-        <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
-          Préstamo: <b>{fmt(prestamo.monto)}</b> · Abonado: <b>{fmt(prestamo.capital_abonado || 0)}</b> · Saldo: <b style={{ color: C.orange }}>{fmt(saldoRestante)}</b>
-        </p>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Inp label="Fecha del abono" type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}/>
-          <Inp label="Abono al interés ($)" type="number" value={montoInteres} onChange={e => setMontoInteres(e.target.value)}/>
-          <Inp label="Abono al capital ($)" type="number" value={montoCapital} onChange={e => setMontoCapital(e.target.value)}/>
-          <Inp label="Nota (opcional)" value={nota} onChange={e => setNota(e.target.value)} placeholder="Observaciones"/>
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          <Btn color={C.orange} onClick={handleGuardar} loading={saving}>Registrar abono</Btn>
-          <Btn color={C.oxford} onClick={onClose}>Cerrar</Btn>
-        </div>
-        <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Historial de abonos</p>
-        {loadingHist ? <p style={{ fontSize: 12, color: C.oxford }}>Cargando...</p>
-          : <Tabla headers={["Fecha", "Interés", "Capital", "Nota"]}
-              rows={historial.map(h => [fmtFecha(h.fecha_pago), fmt(h.monto_interes), fmt(h.monto_capital), h.nota || "—"])}
-              empty="Sin abonos registrados"/>}
-      </Card>
-    </div>
+    <Modal titulo={`Abono — ${prestamo.deudor_nombre}`} onClose={onClose}
+      acciones={<>
+        <Btn color={C.orange} onClick={handleGuardar} loading={saving}>Registrar abono</Btn>
+        <Btn color={C.oxford} onClick={onClose}>Cerrar</Btn>
+      </>}>
+      <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
+        Préstamo: <b>{fmt(prestamo.monto)}</b> · Abonado: <b>{fmt(prestamo.capital_abonado || 0)}</b> · Saldo: <b style={{ color: C.orange }}>{fmt(saldoRestante)}</b>
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Inp label="Fecha del abono" type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}/>
+        <Inp label="Abono al interés ($)" type="number" value={montoInteres} onChange={e => setMontoInteres(e.target.value)}/>
+        <Inp label="Abono al capital ($)" type="number" value={montoCapital} onChange={e => setMontoCapital(e.target.value)}/>
+        <Inp label="Nota (opcional)" value={nota} onChange={e => setNota(e.target.value)} placeholder="Observaciones"/>
+      </div>
+      <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Historial de abonos</p>
+      {loadingHist ? <Cargando/>
+        : <Tabla headers={["Fecha", "Interés", "Capital", "Nota"]}
+            rows={historial.map(h => [fmtFecha(h.fecha_pago), fmt(h.monto_interes), fmt(h.monto_capital), h.nota || "—"])}
+            empty="Sin abonos registrados"/>}
+    </Modal>
   );
 }
 
@@ -84,22 +81,18 @@ function ModalEditarPrestamo({ prestamo, onClose, onSaved }) {
   }
 
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <Card style={{ width: 420 }}>
-        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: C.navy }}>Editar préstamo — {prestamo.deudor_nombre}</p>
-        <p style={{ margin: "0 0 12px", fontSize: 11, color: C.oxford }}>Modifica los datos generales del préstamo</p>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Inp label="Fecha del préstamo" type="date" value={fecha} onChange={e => setFecha(e.target.value)}/>
-          <Inp label="Monto ($)" type="number" value={monto} onChange={e => setMonto(e.target.value)}/>
-          <Inp label="Interés mensual ($)" type="number" value={interes} onChange={e => setInteres(e.target.value)}/>
-          <Inp label="Nota" value={nota} onChange={e => setNota(e.target.value)} placeholder="Observaciones"/>
-        </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-          <Btn color={C.green} onClick={handleGuardar} loading={saving}>Guardar cambios</Btn>
-          <Btn color={C.oxford} onClick={onClose}>Cancelar</Btn>
-        </div>
-      </Card>
-    </div>
+    <Modal titulo={`Editar préstamo — ${prestamo.deudor_nombre}`} sub="Modifica los datos generales del préstamo" onClose={onClose}
+      acciones={<>
+        <Btn color={C.green} onClick={handleGuardar} loading={saving}>Guardar cambios</Btn>
+        <Btn color={C.oxford} onClick={onClose}>Cancelar</Btn>
+      </>}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Inp label="Fecha del préstamo" type="date" value={fecha} onChange={e => setFecha(e.target.value)}/>
+        <Inp label="Monto ($)" type="number" value={monto} onChange={e => setMonto(e.target.value)}/>
+        <Inp label="Interés mensual ($)" type="number" value={interes} onChange={e => setInteres(e.target.value)}/>
+        <Inp label="Nota" value={nota} onChange={e => setNota(e.target.value)} placeholder="Observaciones"/>
+      </div>
+    </Modal>
   );
 }
 
@@ -155,35 +148,16 @@ function ModalCortesInteres({ prestamo, onClose }) {
   }
 
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <div style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", width: 620, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-          <div>
-            <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.navy }}>📅 Intereses mensuales — {prestamo.deudor_nombre}</p>
-            <p style={{ margin: "3px 0 0", fontSize: 12, color: C.oxford }}>Monto: <b>{fmt(prestamo.monto)}</b> · Interés mensual: <b>{fmt(prestamo.interes_mensual)}</b></p>
-          </div>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 20, cursor: "pointer", color: C.oxford }}>✕</button>
-        </div>
+    <Modal titulo={`📅 Intereses mensuales — ${prestamo.deudor_nombre}`} onClose={onClose}>
+      <p style={{ margin: "0 0 14px", fontSize: 12, color: C.oxford }}>Monto: <b>{fmt(prestamo.monto)}</b> · Interés mensual: <b>{fmt(prestamo.interes_mensual)}</b></p>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 16 }}>
-          <div style={{ background: C.redLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Interés pendiente</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: C.red }}>{fmt(totalPendiente)}</p>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{pendientes.length} mes(es)</p>
-          </div>
-          <div style={{ background: C.greenLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Interés cobrado</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: C.green }}>{fmt(totalCobrado)}</p>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{pagados.length} mes(es)</p>
-          </div>
-          <div style={{ background: C.goldLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Total cortes</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: "#8B6914" }}>{cortes.length}</p>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>meses desde el préstamo</p>
-          </div>
-        </div>
+      <Kpis>
+        <Kpi etiqueta="Interés pendiente" valor={fmt(totalPendiente)} nota={`${pendientes.length} mes(es)`} tono="red"/>
+        <Kpi etiqueta="Interés cobrado" valor={fmt(totalCobrado)} nota={`${pagados.length} mes(es)`} tono="green"/>
+        <Kpi etiqueta="Total cortes" valor={cortes.length} nota="meses desde el préstamo" tono="yellow"/>
+      </Kpis>
 
-        {corteSeleccionado && (
+      {corteSeleccionado && (
           <div style={{ background: C.lightGray, borderRadius: 10, padding: "12px 14px", marginBottom: 14, border: `1px solid ${C.gold}` }}>
             <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: C.navy }}>
               Registrar pago — {fmtPeriodo(corteSeleccionado.periodo)}
@@ -212,7 +186,7 @@ function ModalCortesInteres({ prestamo, onClose }) {
           </div>
         )}
 
-        {loading ? <p style={{ fontSize: 12, color: C.oxford, textAlign: "center", padding: 16 }}>Cargando...</p> : (
+        {loading ? <Cargando/> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ background: C.headerBg }}>
@@ -268,8 +242,7 @@ function ModalCortesInteres({ prestamo, onClose }) {
             </table>
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -339,33 +312,18 @@ function ModPrestamos() {
     } catch (e) { toast.error(e.message); }
   }
 
-  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando préstamos...</p>;
+  if (loading) return <Cargando texto="Cargando préstamos..."/>;
 
   return (
     <div>
       <SectionTitle>Préstamos</SectionTitle>
 
-      {/* Tarjetas de resumen — 4 tarjetas con etiquetas correctas */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 14 }}>
-        <Card style={{ background: C.navyLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Cartera activa</p>
-          <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: C.navy }}>{fmt(totalCartera)}</p>
-        </Card>
-        <Card style={{ background: C.goldLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Interés esperado / mes</p>
-          <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: "#8B6914" }}>{fmt(totalInteresesEsperados)}</p>
-          <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>suma de tasas pactadas</p>
-        </Card>
-        <Card style={{ background: C.redLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Intereses no cobrados</p>
-          <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: C.red }}>{fmt(totalInteresesNoCobrados)}</p>
-          <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>acumulado histórico pendiente</p>
-        </Card>
-        <Card style={{ background: C.greenLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Préstamos pagados</p>
-          <p style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 700, color: C.green }}>{pagados.length}</p>
-        </Card>
-      </div>
+      <Kpis>
+        <Kpi etiqueta="Cartera activa" valor={fmt(totalCartera)} tono="blue"/>
+        <Kpi etiqueta="Interés esperado / mes" valor={fmt(totalInteresesEsperados)} nota="suma de tasas pactadas" tono="yellow"/>
+        <Kpi etiqueta="Intereses no cobrados" valor={fmt(totalInteresesNoCobrados)} nota="acumulado histórico pendiente" tono="red"/>
+        <Kpi etiqueta="Préstamos pagados" valor={pagados.length} tono="green"/>
+      </Kpis>
 
       {/* Formulario horizontal */}
       <Card style={{ marginBottom: 16 }}>
@@ -465,43 +423,36 @@ function ModalHistorialCliente({ clienteId, onClose }) {
   const { data, loading } = useApiData(`/api/clientes/${clienteId}/historial-completo`);
 
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
-      <Card style={{ width: 560, maxHeight: "85vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.navy }}>📋 Historial completo del cliente</p>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer", color: C.oxford }}>✕</button>
-        </div>
+    <Modal titulo="📋 Historial completo del cliente" onClose={onClose}>
+      {loading && <Cargando/>}
 
-        {loading && <p style={{ color: C.oxford }}>Cargando...</p>}
+      {!loading && data.cliente && (
+        <>
+          <div style={{ background: C.navyLight, borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+            <p style={{ margin: 0, fontWeight: 700, color: C.navy }}>{data.cliente.nombre} {data.cliente.apellido_pat} {data.cliente.apellido_mat}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: C.oxford }}>{data.cliente.telefono || "sin teléfono"} · {data.cliente.direccion || "sin dirección"}</p>
+          </div>
 
-        {!loading && data.cliente && (
-          <>
-            <div style={{ background: C.navyLight, borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
-              <p style={{ margin: 0, fontWeight: 700, color: C.navy }}>{data.cliente.nombre} {data.cliente.apellido_pat} {data.cliente.apellido_mat}</p>
-              <p style={{ margin: "4px 0 0", fontSize: 12, color: C.oxford }}>{data.cliente.telefono || "sin teléfono"} · {data.cliente.direccion || "sin dirección"}</p>
-            </div>
+          <Kpis>
+            <Kpi etiqueta="Prestado activo" valor={fmt(data.totales.prestado_activo)} tono="blue"/>
+            <Kpi etiqueta="Ahorrado" valor={fmt(data.totales.ahorrado)} tono="green"/>
+            <Kpi etiqueta="En caja" valor={fmt(data.totales.en_caja)} tono="orange"/>
+          </Kpis>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
-              <Card style={{ background: C.navyLight }}><p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Prestado activo</p><p style={{ margin: "2px 0 0", fontWeight: 700, color: C.navy }}>{fmt(data.totales.prestado_activo)}</p></Card>
-              <Card style={{ background: C.greenLight }}><p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Ahorrado</p><p style={{ margin: "2px 0 0", fontWeight: 700, color: C.green }}>{fmt(data.totales.ahorrado)}</p></Card>
-              <Card style={{ background: C.orangeLight }}><p style={{ margin: 0, fontSize: 10, color: C.oxford }}>En caja</p><p style={{ margin: "2px 0 0", fontWeight: 700, color: C.orange }}>{fmt(data.totales.en_caja)}</p></Card>
-            </div>
+          <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Préstamos ({data.prestamos.length})</p>
+          <Tabla headers={["Fecha", "Monto", "Interés", "Estado"]}
+            rows={data.prestamos.map(p => [p.fecha_prestamo, fmt(p.monto), fmt(p.interes_mensual), <Badge key={p.id}>{p.pagado ? "Pagado" : "Activo"}</Badge>])}/>
 
-            <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Préstamos ({data.prestamos.length})</p>
-            <Tabla headers={["Fecha", "Monto", "Interés", "Estado"]}
-              rows={data.prestamos.map(p => [p.fecha_prestamo, fmt(p.monto), fmt(p.interes_mensual), <Badge key={p.id}>{p.pagado ? "Pagado" : "Activo"}</Badge>])}/>
+          <p style={{ margin: "16px 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Ahorros ({data.ahorros.length})</p>
+          <Tabla headers={["Fecha", "Cantidad", "Nota"]}
+            rows={data.ahorros.map(a => [a.fecha, fmt(a.cantidad), a.nota || "—"])}/>
 
-            <p style={{ margin: "16px 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Ahorros ({data.ahorros.length})</p>
-            <Tabla headers={["Fecha", "Cantidad", "Nota"]}
-              rows={data.ahorros.map(a => [a.fecha, fmt(a.cantidad), a.nota || "—"])}/>
-
-            <p style={{ margin: "16px 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Caja de ahorro ({data.caja.length})</p>
-            <Tabla headers={["Fecha", "Capital acumulado", "Nota"]}
-              rows={data.caja.map(c => [c.fecha, fmt(c.capital), c.nota || "—"])}/>
-          </>
-        )}
-      </Card>
-    </div>
+          <p style={{ margin: "16px 0 6px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Caja de ahorro ({data.caja.length})</p>
+          <Tabla headers={["Fecha", "Capital acumulado", "Nota"]}
+            rows={data.caja.map(c => [c.fecha, fmt(c.capital), c.nota || "—"])}/>
+        </>
+      )}
+    </Modal>
   );
 }
 
@@ -524,7 +475,7 @@ function ModClientes() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando clientes...</p>;
+  if (loading) return <Cargando texto="Cargando clientes..."/>;
 
   return (
     <div>
@@ -589,14 +540,13 @@ function ModAhorro() {
     } catch (e) { toast.error(e.message); }
   }
 
-  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando ahorros...</p>;
+  if (loading) return <Cargando texto="Cargando ahorros..."/>;
   return (
     <div>
       <SectionTitle>Ahorro</SectionTitle>
-      <Card style={{ background: C.navyLight, marginBottom: 16 }}>
-        <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Total en ahorros del grupo</p>
-        <p style={{ margin: "2px 0 0", fontSize: 24, fontWeight: 700, color: C.navy }}>{fmt(total)}</p>
-      </Card>
+      <Kpis>
+        <Kpi etiqueta="Total en ahorros del grupo" valor={fmt(total)} tono="blue"/>
+      </Kpis>
       {clientesSinAhorro.length > 0 && (
         <Card style={{ marginBottom: 16 }}>
           <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Dar de alta ahorro</p>
@@ -682,29 +632,12 @@ function ModalMovimientosCaja({ participante, onClose }) {
   }
 
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <div style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", width: 580, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div>
-            <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.navy }}>{participante.participante}</p>
-            <p style={{ margin: 0, fontSize: 12, color: C.oxford }}>Cuota quincenal: <b>{fmt(participante.cuota)}</b></p>
-          </div>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 20, cursor: "pointer", color: C.oxford }}>✕</button>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 16 }}>
-          <div style={{ background: C.navyLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Total aportado</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: C.navy }}>{fmt(totalAportado)}</p>
-          </div>
-          <div style={{ background: C.goldLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Interés (4% anual)</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: "#8B6914" }}>{fmt(interes)}</p>
-          </div>
-          <div style={{ background: C.greenLight, borderRadius: 10, padding: "10px 12px" }}>
-            <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>Total a entregar</p>
-            <p style={{ margin: "2px 0 0", fontSize: 16, fontWeight: 700, color: C.green }}>{fmt(totalConInteres)}</p>
-          </div>
-        </div>
+    <Modal titulo={participante.participante} sub={`Cuota quincenal: ${fmt(participante.cuota)}`} onClose={onClose}>
+        <Kpis>
+          <Kpi etiqueta="Total aportado" valor={fmt(totalAportado)} tono="blue"/>
+          <Kpi etiqueta="Interés (8% anual)" valor={fmt(interes)} tono="yellow"/>
+          <Kpi etiqueta="Total a entregar" valor={fmt(totalConInteres)} tono="green"/>
+        </Kpis>
         <div style={{ background: C.lightGray, borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
           <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Registrar aportación quincenal</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr auto", gap: 8, alignItems: "end" }}>
@@ -715,7 +648,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
           </div>
         </div>
         <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Historial ({movimientos.length} registros)</p>
-        {loading ? <p style={{ fontSize: 12, color: C.oxford, textAlign: "center", padding: 12 }}>Cargando...</p>
+        {loading ? <Cargando/>
           : <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: C.headerBg }}>
@@ -774,8 +707,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
               </table>
             </div>
         }
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -824,25 +756,16 @@ function ModCaja() {
     catch (e) { toast.error(e.message); }
   }
 
-  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando caja...</p>;
+  if (loading) return <Cargando texto="Cargando caja..."/>;
 
   return (
     <div>
       <SectionTitle>Caja de ahorro</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 14 }}>
-        <Card style={{ background: C.navyLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Capital total acumulado</p>
-          <p style={{ margin: "2px 0 0", fontSize: 22, fontWeight: 700, color: C.navy }}>{fmt(totalCapital)}</p>
-        </Card>
-        <Card style={{ background: C.goldLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Aportación quincenal total</p>
-          <p style={{ margin: "2px 0 0", fontSize: 22, fontWeight: 700, color: "#8B6914" }}>{fmt(totalCuota)}</p>
-        </Card>
-        <Card style={{ background: C.greenLight }}>
-          <p style={{ margin: 0, fontSize: 11, color: C.oxford }}>Interés anual proyectado (8%)</p>
-          <p style={{ margin: "2px 0 0", fontSize: 22, fontWeight: 700, color: C.green }}>{fmt(interesProyectado)}</p>
-        </Card>
-      </div>
+      <Kpis>
+        <Kpi etiqueta="Capital total acumulado" valor={fmt(totalCapital)} tono="blue"/>
+        <Kpi etiqueta="Aportación quincenal total" valor={fmt(totalCuota)} tono="yellow"/>
+        <Kpi etiqueta="Interés anual proyectado (8%)" valor={fmt(interesProyectado)} tono="green"/>
+      </Kpis>
 
       {/* Formulario HORIZONTAL */}
       <Card style={{ marginBottom: 16 }}>
@@ -968,7 +891,7 @@ function ModPagosPlazos() {
     catch (e) { toast.error(e.message); }
   }
 
-  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando plazos...</p>;
+  if (loading) return <Cargando texto="Cargando plazos..."/>;
 
   const totalCosto = plazos.reduce((a, p) => a + parseFloat(p.costo || 0), 0);
   const totalAbonado = plazos.reduce((a, p) => a + parseFloat(p.abonado || 0), 0);
@@ -1082,38 +1005,17 @@ function ModalInformeDeudor({ nombre, onClose }) {
   };
 
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
-      <div style={{ background: C.cardBg, borderRadius: 14, padding: "22px 26px", width: 700, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,.22)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div>
-            <p style={{ margin: 0, fontSize: 16, fontWeight: 800, color: C.navy }}>📋 Informe de deudor</p>
-            <p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 700, color: C.orange }}>{nombre}</p>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <Btn small color={C.orange} onClick={handleDescargarPDF} loading={descargando}>
-              📄 Descargar PDF
-            </Btn>
-            <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: C.oxford }}>✕</button>
-          </div>
-        </div>
-
-        {loading && <p style={{ textAlign: "center", padding: 24, color: C.oxford }}>Cargando informe...</p>}
+    <Modal titulo="📋 Informe de deudor" sub={nombre} onClose={onClose}
+      acciones={<Btn small color={C.orange} onClick={handleDescargarPDF} loading={descargando}>📄 Descargar PDF</Btn>}>
+        {loading && <Cargando texto="Cargando informe..."/>}
         {error && <p style={{ color: C.red }}>Error: {error}</p>}
         {data && data.resumen && (
           <>
-            {/* Resumen numérico */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 18 }}>
-              {[
-                { l: "Capital prestado activo", v: fmt(data.resumen.total_prestado), c: C.navy, bg: C.navyLight },
-                { l: "Interés pendiente acumulado", v: fmt(data.resumen.interes_pendiente_acumulado), c: C.red, bg: C.redLight },
-                { l: "Interés cobrado total", v: fmt(data.resumen.interes_cobrado_total), c: C.green, bg: C.greenLight },
-              ].map((s, i) => (
-                <div key={i} style={{ background: s.bg, borderRadius: 10, padding: "10px 12px" }}>
-                  <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{s.l}</p>
-                  <p style={{ margin: "2px 0 0", fontSize: 15, fontWeight: 700, color: s.c }}>{s.v}</p>
-                </div>
-              ))}
-            </div>
+            <Kpis>
+              <Kpi etiqueta="Capital prestado activo" valor={fmt(data.resumen.total_prestado)} tono="blue"/>
+              <Kpi etiqueta="Interés pendiente acumulado" valor={fmt(data.resumen.interes_pendiente_acumulado)} tono="red"/>
+              <Kpi etiqueta="Interés cobrado total" valor={fmt(data.resumen.interes_cobrado_total)} tono="green"/>
+            </Kpis>
 
             {/* Préstamos */}
             <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>
@@ -1180,8 +1082,7 @@ function ModalInformeDeudor({ nombre, onClose }) {
             )}
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1195,7 +1096,7 @@ function ModResumen({ irA }) {
   const { data: flujoMensual }           = useApiData("/api/dashboard/flujo-mensual");
   const [deudorModal, setDeudorModal] = useState(null);
 
-  if (lp || la || lc || lcart) return <p style={{ padding: 20, color: C.oxford }}>Cargando resumen...</p>;
+  if (lp || la || lc || lcart) return <Cargando texto="Cargando resumen..."/>;
 
   const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
   const totalCartera        = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
@@ -1244,29 +1145,14 @@ function ModResumen({ irA }) {
     <div>
       <SectionTitle>Resumen ejecutivo — GONZA</SectionTitle>
 
-      {/* Tarjetas principales — 6 con etiquetas correctas */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
-        {[
-          { l: "Cartera activa prestada",       v: fmt(totalCartera),          c: C.navy,    bg: C.navyLight,   i: "💼", sec: "prestamos" },
-          { l: "Interés esperado / mes",         v: fmt(totalInteresEsperado),  c: "#8B6914", bg: C.goldLight,   i: "📊", sec: "prestamos",
-            sub: "suma de tasas pactadas" },
-          { l: "Intereses no cobrados (total)",  v: fmt(totalInteresNoCobrado), c: C.red,     bg: C.redLight,    i: "⚠️", sec: "prestamos",
-            sub: "acumulado histórico pendiente" },
-          { l: "Ahorro total del grupo",         v: fmt(totalAhorros),          c: C.green,   bg: C.greenLight,  i: "🏦", sec: "ahorro" },
-          { l: "Capital caja de ahorro",         v: fmt(totalCaja),             c: C.orange,  bg: C.orangeLight, i: "💰", sec: "caja" },
-          { l: "Interés anual proyectado (8%)",  v: fmt(interesAnualCaja),      c: "#166534", bg: C.greenLight,  i: "📈", sec: "caja",
-            sub: "sobre el capital de caja" },
-        ].map((s, i) => (
-          <Card key={i} onClick={() => irA(s.sec)} style={{ background: s.bg, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
-            <span style={{ fontSize: 26 }}>{s.i}</span>
-            <div>
-              <p style={{ margin: 0, fontSize: 10, color: C.oxford }}>{s.l}</p>
-              <p style={{ margin: "2px 0 0", fontSize: 17, fontWeight: 700, color: s.c }}>{s.v}</p>
-              {s.sub && <p style={{ margin: 0, fontSize: 9, color: C.oxford }}>{s.sub}</p>}
-            </div>
-          </Card>
-        ))}
-      </div>
+      <Kpis>
+        <Kpi etiqueta="Cartera activa prestada" valor={fmt(totalCartera)} tono="blue" onClick={() => irA("prestamos")}/>
+        <Kpi etiqueta="Interés esperado / mes" valor={fmt(totalInteresEsperado)} nota="suma de tasas pactadas" tono="yellow" onClick={() => irA("prestamos")}/>
+        <Kpi etiqueta="Intereses no cobrados (total)" valor={fmt(totalInteresNoCobrado)} nota="acumulado histórico pendiente" tono="red" onClick={() => irA("prestamos")}/>
+        <Kpi etiqueta="Ahorro total del grupo" valor={fmt(totalAhorros)} tono="green" onClick={() => irA("ahorro")}/>
+        <Kpi etiqueta="Capital caja de ahorro" valor={fmt(totalCaja)} tono="orange" onClick={() => irA("caja")}/>
+        <Kpi etiqueta="Interés anual proyectado (8%)" valor={fmt(interesAnualCaja)} nota="sobre el capital de caja" tono="green" onClick={() => irA("caja")}/>
+      </Kpis>
 
       {/* Gráficas */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
@@ -1457,7 +1343,7 @@ function ModUsuarios() {
     } catch (e) { toast.error(e.message); }
   }
 
-  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando usuarios...</p>;
+  if (loading) return <Cargando texto="Cargando usuarios..."/>;
 
   return (
     <div>
@@ -1640,7 +1526,7 @@ function ModConfiguracion() {
     }
   }
 
-  if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando configuración...</p>;
+  if (loading) return <Cargando texto="Cargando configuración..."/>;
 
   return (
     <div>
@@ -1867,24 +1753,20 @@ function ModalResetPassword({ onClose }) {
     finally { setSaving(false); }
   }
 
-  return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
-      <Card style={{ width: 360 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.navy }}>🔑 Restablecer contraseña</p>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer", color: C.oxford }}>✕</button>
-        </div>
+  const acciones = step === 1
+    ? <><Btn color={C.orange} onClick={handleSolicitarCodigo} loading={saving}>Enviar código</Btn><Btn color={C.oxford} onClick={onClose}>Cancelar</Btn></>
+    : step === 2
+      ? <><Btn color={C.orange} onClick={handleConfirmar} loading={saving}>Restablecer</Btn><Btn color={C.oxford} onClick={onClose}>Cancelar</Btn></>
+      : <Btn color={C.navy} onClick={onClose}>Volver al login</Btn>;
 
+  return (
+    <Modal titulo="🔑 Restablecer contraseña" onClose={onClose} acciones={acciones}>
         {step === 1 && (
           <>
             <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
               Ingresa tu nombre de usuario. Te enviaremos un código al correo que tengas registrado.
             </p>
             <Inp label="Nombre de usuario" value={username} onChange={e => setUsername(e.target.value)} placeholder="Ej. jgonzalez" autoFocus/>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Btn color={C.orange} onClick={handleSolicitarCodigo} loading={saving}>Enviar código</Btn>
-              <Btn color={C.oxford} onClick={onClose}>Cancelar</Btn>
-            </div>
           </>
         )}
 
@@ -1899,21 +1781,13 @@ function ModalResetPassword({ onClose }) {
             </p>
             <Inp label="Nueva contraseña" type="password" value={newPass} onChange={e => setNewPass(e.target.value)} placeholder="••••••••"/>
             <Inp label="Confirmar contraseña" type="password" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} placeholder="••••••••"/>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Btn color={C.orange} onClick={handleConfirmar} loading={saving}>Restablecer</Btn>
-              <Btn color={C.oxford} onClick={onClose}>Cancelar</Btn>
-            </div>
           </>
         )}
 
         {step === 3 && (
-          <>
-            <div style={{ background: C.greenLight, color: C.green, fontSize: 13, padding: "12px 14px", borderRadius: 8, marginBottom: 14 }}>{msg}</div>
-            <Btn color={C.navy} onClick={onClose}>Volver al login</Btn>
-          </>
+          <div style={{ background: C.greenLight, color: C.green, fontSize: 13, padding: "12px 14px", borderRadius: 8 }}>{msg}</div>
         )}
-      </Card>
-    </div>
+    </Modal>
   );
 }
 

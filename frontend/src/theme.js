@@ -56,13 +56,6 @@ export const C = {
   mono:   "var(--m)",
 };
 
-// Compatibilidad: App.jsx todavía importa estas dos y las pasa a Object.assign.
-// Ahora son idénticas a C, así que ese Object.assign es inofensivo (no rompe
-// nada aunque no lo hayas quitado todavía). Cuando actualices App.jsx puedes
-// borrar los tres exports y el import correspondiente.
-export const paletaClara = { ...C };
-export const paletaOscura = { ...C };
-
 /**
  * Aplica el tema. Llamar desde App.jsx en lugar de Object.assign(C, ...).
  * @param {"claro"|"oscuro"} tema

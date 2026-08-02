@@ -222,20 +222,6 @@ h1,h2,h3 { font-weight:800; letter-spacing:-.02em; line-height:1.15 }
 .tag.r { color:var(--red);    border-color:color-mix(in srgb,var(--red) 45%,transparent) }
 .tag.b { color:var(--blue);   border-color:color-mix(in srgb,var(--blue) 45%,transparent) }
 .tag.p { color:var(--purple); border-color:color-mix(in srgb,var(--purple) 45%,transparent) }
-.pos { color:var(--green) } .neg { color:var(--red) }
-
-/* ── AVISOS Y VACÍOS ─────────────────────────────────────────────────────── */
-.note {
-  background:var(--campo); border:1px solid var(--line); border-left:3px solid var(--blue);
-  border-radius:0; padding:12px 14px; font-size:12.5px; color:var(--muted); margin:14px 0;
-}
-.note b { color:var(--text) }
-.note.w { border-left-color:var(--yellow) }
-.note.r { border-left-color:var(--red) }
-.note.g { border-left-color:var(--green) }
-
-.empty { text-align:center; padding:58px 20px; border:1px dashed var(--line2); border-radius:var(--r); color:var(--muted) }
-.empty h3 { font-size:19px; color:var(--text); margin-bottom:8px }
 
 /* ── MODALES ─────────────────────────────────────────────────────────────── */
 .ov {
