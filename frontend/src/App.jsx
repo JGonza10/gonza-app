@@ -1,128 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import toast, { Toaster } from "react-hot-toast";
 
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
-
-const C = {
-  navy:"#0B1F4B", gold:"#C9A84C", orange:"#E87722", oxford:"#3B3B4F",
-  white:"#FFFFFF", lightGray:"#F4F4F6", border:"#D4D4DC",
-  goldLight:"#F5EDD3", navyLight:"#E8EDF5", orangeLight:"#FEF0E3",
-  red:"#D93025", green:"#1A7F3C", redLight:"#FDE8E8", greenLight:"#E6F4EC",
-};
-
-// ── HELPERS ───────────────────────────────────────────────────────────────────
-const fmt = n => n == null ? "—" :
-  new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(n);
-
-const today = new Date().toISOString().split("T")[0];
-
-// Convierte YYYY-MM-DD → DD/MM/AAAA para mostrar en pantalla
-const fmtFecha = f => {
-  if (!f) return "—";
-  const s = f.toString().substring(0, 10);
-  const [y, m, d] = s.split("-");
-  if (!y || !m || !d) return f;
-  return `${d}/${m}/${y}`;
-};
-
-async function api(path, options = {}) {
-  const user = sessionStorage.getItem("gonza_user");
-  const token = user ? JSON.parse(user).token : "";
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-    ...options,
-  });
-  if (res.status === 401) {
-    // Token inválido o expirado: cerrar sesión y regresar al login
-    sessionStorage.removeItem("gonza_user");
-    const body = await res.json().catch(() => ({}));
-    window.location.reload();
-    throw new Error(body.error || "Sesión expirada, inicia sesión de nuevo");
-  }
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Error ${res.status}: ${res.statusText}`);
-  }
-  return res.json();
-}
-
-// ── COMPONENTES BASE ──────────────────────────────────────────────────────────
-// Logo JGM Gonzas Systems — recreado en SVG con los colores del logo oficial
-function Logo({ size = 40 }) {
-  return (
-    <img src="/logo-gonza-icon.png" alt="JGM Gonzas Systems" style={{ width: size, height: size, objectFit: "contain", borderRadius: 8 }}/>
-  );
-}
-
-// Logo grande para la pantalla de login — muestra JGM + texto completo
-function LogoLogin() {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <img src="/logo-gonza-login.jpg" alt="JGM Gonzas Systems" style={{ width: 220, maxWidth: "100%", objectFit: "contain" }}/>
-    </div>
-  );
-}
-function Card({ children, style }) {
-  return <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 18px", ...style }}>{children}</div>;
-}
-function SectionTitle({ children }) {
-  return <h2 style={{ margin: "0 0 14px", fontSize: 17, fontWeight: 700, color: C.navy, borderLeft: `4px solid ${C.gold}`, paddingLeft: 10 }}>{children}</h2>;
-}
-function Badge({ children, color = C.navy, bg = C.navyLight }) {
-  return <span style={{ background: bg, color, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" }}>{children}</span>;
-}
-function Inp({ label, ...p }) {
-  return (
-    <div style={{ marginBottom: 9 }}>
-      {label && <label style={{ display: "block", fontSize: 12, color: C.oxford, marginBottom: 3, fontWeight: 600 }}>{label}</label>}
-      <input {...p} style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, color: C.navy, background: C.lightGray, boxSizing: "border-box", ...p.style }}/>
-    </div>
-  );
-}
-function Sel({ label, children, ...p }) {
-  return (
-    <div style={{ marginBottom: 9 }}>
-      {label && <label style={{ display: "block", fontSize: 12, color: C.oxford, marginBottom: 3, fontWeight: 600 }}>{label}</label>}
-      <select {...p} style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, color: C.navy, background: C.lightGray, boxSizing: "border-box" }}>{children}</select>
-    </div>
-  );
-}
-function Btn({ children, onClick, color = C.navy, small, loading }) {
-  return (
-    <button onClick={onClick} disabled={loading} style={{ background: loading ? "#aaa" : color, color: C.white, border: "none", borderRadius: 8, padding: small ? "4px 12px" : "8px 18px", fontSize: small ? 11 : 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}>
-      {loading ? "..." : children}
-    </button>
-  );
-}
-function Tabla({ headers, rows, empty = "Sin registros" }) {
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-        <thead><tr style={{ background: C.navy }}>{headers.map((h, i) => <th key={i} style={{ color: C.gold, padding: "7px 9px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
-        <tbody>
-          {rows.length === 0
-            ? <tr><td colSpan={headers.length} style={{ textAlign: "center", padding: 16, color: C.oxford }}>{empty}</td></tr>
-            : rows.map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? C.white : C.lightGray }}>{r.map((c, j) => <td key={j} style={{ padding: "6px 9px", color: C.oxford, borderBottom: `1px solid ${C.border}` }}>{c}</td>)}</tr>)
-          }
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function useApiData(endpoint) {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const reload = useCallback(async () => {
-    setLoading(true); setError(null);
-    try { setData(await api(endpoint)); }
-    catch (e) { setError(e.message); }
-    finally { setLoading(false); }
-  }, [endpoint]);
-  useEffect(() => { reload(); }, [reload]);
-  return { data, loading, error, reload };
-}
+import { C, paletaClara, paletaOscura, fmt, fmtFecha, today, calcularInteresMensual, calcularCuotaMensual } from "./theme";
+import { api, useApiData, usePaginacion, ConfirmProvider, useConfirm } from "./api";
+import { Logo, LogoLogin, Card, SectionTitle, Badge, Inp, Sel, Btn, Tabla } from "./components/ui";
 
 // ── MÓDULO: PRÉSTAMOS ─────────────────────────────────────────────────────────
 function ModalAbono({ prestamo, onClose, onSaved }) {
@@ -137,7 +19,7 @@ function ModalAbono({ prestamo, onClose, onSaved }) {
   async function handleGuardar() {
     const mi = parseFloat(montoInteres || 0);
     const mc = parseFloat(montoCapital || 0);
-    if (mi <= 0 && mc <= 0) return alert("Ingresa al menos un monto mayor a 0");
+    if (mi <= 0 && mc <= 0) return toast.error("Ingresa al menos un monto mayor a 0");
     setSaving(true);
     try {
       await api(`/api/prestamos/${prestamo.id}/abono`, {
@@ -145,7 +27,7 @@ function ModalAbono({ prestamo, onClose, onSaved }) {
         body: JSON.stringify({ monto_interes: mi, monto_capital: mc, fecha_pago: fechaPago, nota }),
       });
       onSaved();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -197,7 +79,7 @@ function ModalEditarPrestamo({ prestamo, onClose, onSaved }) {
         }),
       });
       onSaved();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -244,9 +126,9 @@ function ModalCortesInteres({ prestamo, onClose }) {
   };
 
   async function handlePagar() {
-    if (!corteSeleccionado) return alert("Selecciona un mes para pagar");
+    if (!corteSeleccionado) return toast.error("Selecciona un mes para pagar");
     const mp = parseFloat(montoPagado || corteSeleccionado.monto_interes);
-    if (mp <= 0) return alert("Ingresa un monto válido");
+    if (mp <= 0) return toast.error("Ingresa un monto válido");
     setSaving(true);
     try {
       await api(`/api/prestamos/${prestamo.id}/cortes/${corteSeleccionado.id}/pagar`, {
@@ -257,7 +139,7 @@ function ModalCortesInteres({ prestamo, onClose }) {
       setMontoPagado("");
       setNota("");
       reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -269,12 +151,12 @@ function ModalCortesInteres({ prestamo, onClose }) {
         body: JSON.stringify({ nota: notaPr }),
       });
       reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
   }
 
   return (
     <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", width: 620, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
+      <div style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", width: 620, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
           <div>
             <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.navy }}>📅 Intereses mensuales — {prestamo.deudor_nombre}</p>
@@ -333,7 +215,7 @@ function ModalCortesInteres({ prestamo, onClose }) {
         {loading ? <p style={{ fontSize: 12, color: C.oxford, textAlign: "center", padding: 16 }}>Cargando...</p> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: C.navy }}>
+              <thead><tr style={{ background: C.headerBg }}>
                 {["Mes","Interés esperado","Estado","Pagado","Fecha pago","Nota","Acción"].map((h, i) =>
                   <th key={i} style={{ color: C.gold, padding: "7px 8px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>)}
               </tr></thead>
@@ -423,8 +305,11 @@ function ModPrestamos() {
       return ordenFecha === "asc" ? diff : -diff;
     });
 
+  const { itemsPagina: activosPagina, Paginador: PaginadorActivos } = usePaginacion(activosFiltrados, 15);
+  const { itemsPagina: pagadosPagina, Paginador: PaginadorPagados } = usePaginacion(pagados, 15);
+
   async function handleAgregar() {
-    if (!f.cliente_id || !f.monto) return alert("Cliente y monto requeridos");
+    if (!f.cliente_id || !f.monto) return toast.error("Cliente y monto requeridos");
     setSaving(true);
     try {
       await api("/api/prestamos", {
@@ -434,12 +319,12 @@ function ModPrestamos() {
           fecha_prestamo: f.fecha_prestamo,
           nota: f.nota,
           monto: parseFloat(f.monto),
-          interes_mensual: parseFloat(f.monto) * 0.10,
+          interes_mensual: calcularInteresMensual(f.monto),
         }),
       });
       setF({ cliente_id: "", fecha_prestamo: today, monto: "", nota: "" });
       reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -451,7 +336,7 @@ function ModPrestamos() {
         body: JSON.stringify({ fecha_pago: fecha, tipo_pago: "transferencia" }),
       });
       reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando préstamos...</p>;
@@ -498,7 +383,7 @@ function ModPrestamos() {
           </div>
         </div>
         {f.monto && <div style={{ background: C.goldLight, borderRadius: 8, padding: "7px 10px", fontSize: 12, marginTop: -4 }}>
-          Interés (10%): <b>{fmt(parseFloat(f.monto) * 0.10)}</b> / mes
+          Interés (10%): <b>{fmt(calcularInteresMensual(f.monto))}</b> / mes
         </div>}
       </Card>
 
@@ -522,7 +407,7 @@ function ModPrestamos() {
         </div>
         <Tabla
           headers={["#", "Deudor", "Fecha", "Monto", "Interés/mes", "Capital abonado", "Saldo", "Estado interés", "Nota", "Acciones"]}
-          rows={activosFiltrados.map(p => {
+          rows={activosPagina.map(p => {
             const saldo = parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0);
             const mesesPendientes = pendientesPorPrestamo[p.id] || 0;
             return [
@@ -545,6 +430,7 @@ function ModPrestamos() {
             ];
           })}
         />
+        <PaginadorActivos/>
         <div style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.oxford }}>TOTALES GRUPO</div>
           <div style={{ fontSize: 12 }}>Capital: <span style={{ fontWeight: 700, color: C.navy }}>{fmt(totalCartera)}</span></div>
@@ -556,8 +442,9 @@ function ModPrestamos() {
         <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Pagados ({pagados.length})</p>
         <Tabla
           headers={["#", "Deudor", "Fecha préstamo", "Monto", "Fecha pago", "Nota"]}
-          rows={pagados.map(p => [p.id, p.deudor_nombre, fmtFecha(p.fecha_prestamo), fmt(p.monto), fmtFecha(p.fecha_pago), p.nota || "—"])}
+          rows={pagadosPagina.map(p => [p.id, p.deudor_nombre, fmtFecha(p.fecha_prestamo), fmt(p.monto), fmtFecha(p.fecha_pago), p.nota || "—"])}
         />
+        <PaginadorPagados/>
       </Card>}
 
       {abonoPrestamo && (
@@ -620,19 +507,20 @@ function ModalHistorialCliente({ clienteId, onClose }) {
 
 function ModClientes() {
   const { data: clientes, loading, reload } = useApiData("/api/clientes");
+  const { itemsPagina, Paginador } = usePaginacion(clientes, 15);
   const [f, setF] = useState({ nombre: "", apellido_pat: "", apellido_mat: "", telefono: "", direccion: "" });
   const [saving, setSaving] = useState(false);
   const [verHistorial, setVerHistorial] = useState(null);
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   async function handleAgregar() {
-    if (!f.nombre) return alert("Nombre requerido");
+    if (!f.nombre) return toast.error("Nombre requerido");
     setSaving(true);
     try {
       await api("/api/clientes", { method: "POST", body: JSON.stringify(f) });
       setF({ nombre: "", apellido_pat: "", apellido_mat: "", telefono: "", direccion: "" });
       reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -659,10 +547,11 @@ function ModClientes() {
         <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Directorio ({clientes.length} clientes)</p>
         <Tabla
           headers={["ID", "Apellido paterno", "Apellido materno", "Nombre", "Teléfono", "Estado", ""]}
-          rows={clientes.map(c => [c.id, c.apellido_pat, c.apellido_mat, c.nombre, c.telefono || "—",
+          rows={itemsPagina.map(c => [c.id, c.apellido_pat, c.apellido_mat, c.nombre, c.telefono || "—",
             <Badge key={c.id}>{c.activo ? "Activo" : "Inactivo"}</Badge>,
             <Btn key={"h" + c.id} small color={C.oxford} onClick={() => setVerHistorial(c.id)}>Ver historial</Btn>])}
         />
+        <Paginador/>
       </Card>
       {verHistorial && <ModalHistorialCliente clienteId={verHistorial} onClose={() => setVerHistorial(null)}/>}
     </div>
@@ -680,7 +569,7 @@ function ModAhorro() {
   const total = ahorros.reduce((a, x) => a + parseFloat(x.cantidad || 0), 0);
 
   async function handleAgregar() {
-    if (!f.cliente_id) return alert("Selecciona un cliente");
+    if (!f.cliente_id) return toast.error("Selecciona un cliente");
     setSaving(true);
     try {
       await api("/api/ahorros", {
@@ -689,7 +578,7 @@ function ModAhorro() {
       });
       setF({ cliente_id: "", cantidad: "" });
       reload(); reloadCSA();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -697,7 +586,7 @@ function ModAhorro() {
     try {
       await api(`/api/ahorros/${aid}`, { method: "PATCH", body: JSON.stringify({ cantidad: parseFloat(editValor || 0) }) });
       setEditId(null); reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando ahorros...</p>;
@@ -748,6 +637,7 @@ function ModAhorro() {
 
 // ── MÓDULO: CAJA — con movimientos quincenales ────────────────────────────────
 function ModalMovimientosCaja({ participante, onClose }) {
+  const confirm = useConfirm();
   const { data: movimientos, loading, reload } = useApiData(`/api/caja/${participante.id}/movimientos`);
   const [fecha, setFecha] = useState(today);
   const [monto, setMonto] = useState(participante.cuota || "");
@@ -761,7 +651,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
   const totalConInteres = totalAportado + interes;
 
   async function handleRegistrar() {
-    if (!monto || parseFloat(monto) <= 0) return alert("Ingresa un monto válido");
+    if (!monto || parseFloat(monto) <= 0) return toast.error("Ingresa un monto válido");
     setSaving(true);
     try {
       await api(`/api/caja/${participante.id}/movimientos`, {
@@ -769,7 +659,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
         body: JSON.stringify({ fecha, monto: parseFloat(monto), nota }),
       });
       setNota(""); reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -780,20 +670,20 @@ function ModalMovimientosCaja({ participante, onClose }) {
         body: JSON.stringify({ fecha: editF.fecha, monto: parseFloat(editF.monto || 0), nota: editF.nota }),
       });
       setEditId(null); reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
   }
 
   async function handleBorrarMov(mid) {
-    if (!window.confirm("¿Eliminar esta aportación? El capital se recalculará automáticamente.")) return;
+    if (!(await confirm("¿Eliminar esta aportación? El capital se recalculará automáticamente."))) return;
     try {
       await api(`/api/caja/${participante.id}/movimientos/${mid}`, { method: "DELETE" });
       reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
   }
 
   return (
     <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", width: 580, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
+      <div style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", width: 580, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div>
             <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.navy }}>{participante.participante}</p>
@@ -828,7 +718,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
         {loading ? <p style={{ fontSize: 12, color: C.oxford, textAlign: "center", padding: 12 }}>Cargando...</p>
           : <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: C.navy }}>
+                <thead><tr style={{ background: C.headerBg }}>
                   {["#","Fecha","Monto","Acumulado","Nota","Acciones"].map((h,i) => <th key={i} style={{ color: C.gold, padding: "6px 8px", textAlign: "left", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>)}
                 </tr></thead>
                 <tbody>
@@ -859,7 +749,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
                         );
                       }
                       return (
-                      <tr key={i} style={{ background: i % 2 === 0 ? C.white : C.lightGray }}>
+                      <tr key={i} style={{ background: i % 2 === 0 ? C.cardBg : C.rowAlt }}>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{i+1}</td>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{fmtFecha(m.fecha)}</td>
                         <td style={{ padding: "5px 8px", color: C.navy, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>{fmt(m.monto)}</td>
@@ -890,6 +780,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
 }
 
 function ModCaja() {
+  const confirm = useConfirm();
   const { data: caja, loading, reload } = useApiData("/api/caja");
   const { data: clientes } = useApiData("/api/clientes");
   const [f, setF] = useState({ cliente_id: "", cuota: "", capital: "", fecha_inicio: "" });
@@ -904,7 +795,7 @@ function ModCaja() {
   const interesProyectado = totalCapital * 0.08;
 
   async function handleAgregar() {
-    if (!f.cliente_id) return alert("Selecciona un cliente");
+    if (!f.cliente_id) return toast.error("Selecciona un cliente");
     setSaving(true);
     try {
       await api("/api/caja", {
@@ -913,7 +804,7 @@ function ModCaja() {
       });
       setF({ cliente_id: "", cuota: "", capital: "", fecha_inicio: "" });
       reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -924,13 +815,13 @@ function ModCaja() {
         body: JSON.stringify({ participante: editF.participante, cuota: parseFloat(editF.cuota || 0), capital: parseFloat(editF.capital || 0), fecha_inicio: editF.fecha_inicio }),
       });
       setEditId(null); reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
   }
 
   async function handleBorrar(cid) {
-    if (!window.confirm("¿Eliminar este participante de la caja?")) return;
+    if (!(await confirm("¿Eliminar este participante de la caja?"))) return;
     try { await api(`/api/caja/${cid}`, { method: "DELETE" }); reload(); }
-    catch (e) { alert("Error: " + e.message); }
+    catch (e) { toast.error(e.message); }
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando caja...</p>;
@@ -1023,6 +914,7 @@ function ModCaja() {
 
 // ── MÓDULO: PAGOS A PLAZOS ────────────────────────────────────────────────────
 function ModPagosPlazos() {
+  const confirm = useConfirm();
   const { data: plazos, loading, reload } = useApiData("/api/plazos");
   const [f, setF] = useState({ material: "", costo: "", meses_total: "", cuota: "" });
   const [saving, setSaving] = useState(false);
@@ -1032,23 +924,23 @@ function ModPagosPlazos() {
   // Calcula cuota automáticamente al cambiar costo o meses
   function handleCostoChange(e) {
     const costo = e.target.value;
-    const cuotaAuto = costo && f.meses_total ? (parseFloat(costo) / parseInt(f.meses_total)).toFixed(2) : "";
+    const cuotaAuto = calcularCuotaMensual(costo, f.meses_total);
     setF(x => ({ ...x, costo, cuota: cuotaAuto }));
   }
   function handleMesesChange(e) {
     const meses = e.target.value;
-    const cuotaAuto = f.costo && meses ? (parseFloat(f.costo) / parseInt(meses)).toFixed(2) : "";
+    const cuotaAuto = calcularCuotaMensual(f.costo, meses);
     setF(x => ({ ...x, meses_total: meses, cuota: cuotaAuto }));
   }
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   async function handleAbonar(pid) {
     try { await api(`/api/plazos/${pid}/abonar`, { method: "PATCH", body: JSON.stringify({}) }); reload(); }
-    catch (e) { alert("Error: " + e.message); }
+    catch (e) { toast.error(e.message); }
   }
 
   async function handleAgregar() {
-    if (!f.material || !f.meses_total) return alert("Material y meses son requeridos");
+    if (!f.material || !f.meses_total) return toast.error("Material y meses son requeridos");
     setSaving(true);
     try {
       await api("/api/plazos", {
@@ -1056,7 +948,7 @@ function ModPagosPlazos() {
         body: JSON.stringify({ material: f.material, costo: f.costo ? parseFloat(f.costo) : null, meses_total: parseInt(f.meses_total), meses_pagados: 0, cuota: f.cuota ? parseFloat(f.cuota) : null, abonado: 0 }),
       });
       setF({ material: "", costo: "", meses_total: "", cuota: "" }); reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -1067,13 +959,13 @@ function ModPagosPlazos() {
         body: JSON.stringify({ material: editF.material, costo: editF.costo===""?null:parseFloat(editF.costo), meses_total: parseInt(editF.meses_total), meses_pagados: parseInt(editF.meses_pagados), cuota: editF.cuota===""?null:parseFloat(editF.cuota), abonado: parseFloat(editF.abonado||0) }),
       });
       setEditId(null); reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
   }
 
   async function handleBorrar(pid) {
-    if (!window.confirm("¿Eliminar este artículo?")) return;
+    if (!(await confirm("¿Eliminar este artículo?"))) return;
     try { await api(`/api/plazos/${pid}`, { method: "DELETE" }); reload(); }
-    catch (e) { alert("Error: " + e.message); }
+    catch (e) { toast.error(e.message); }
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando plazos...</p>;
@@ -1158,6 +1050,29 @@ function ModPagosPlazos() {
 // ── MODAL: INFORME POR DEUDOR ─────────────────────────────────────────────────
 function ModalInformeDeudor({ nombre, onClose }) {
   const { data, loading, error } = useApiData(`/api/informe-deudor/${encodeURIComponent(nombre)}`);
+  const [descargando, setDescargando] = useState(false);
+
+  async function handleDescargarPDF() {
+    setDescargando(true);
+    try {
+      const user = sessionStorage.getItem("gonza_user");
+      const token = user ? JSON.parse(user).token : "";
+      const res = await fetch(`${API_BASE}/api/informe-deudor/${encodeURIComponent(nombre)}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("No se pudo generar el PDF");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `informe_${nombre.replace(/\s+/g, "_")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { toast.error(e.message); }
+    finally { setDescargando(false); }
+  }
 
   const fmtPeriodo = p => {
     if (!p) return "—";
@@ -1168,13 +1083,18 @@ function ModalInformeDeudor({ nombre, onClose }) {
 
   return (
     <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }}>
-      <div style={{ background: C.white, borderRadius: 14, padding: "22px 26px", width: 700, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,.22)" }}>
+      <div style={{ background: C.cardBg, borderRadius: 14, padding: "22px 26px", width: 700, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,.22)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <div>
             <p style={{ margin: 0, fontSize: 16, fontWeight: 800, color: C.navy }}>📋 Informe de deudor</p>
             <p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 700, color: C.orange }}>{nombre}</p>
           </div>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: C.oxford }}>✕</button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Btn small color={C.orange} onClick={handleDescargarPDF} loading={descargando}>
+              📄 Descargar PDF
+            </Btn>
+            <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: C.oxford }}>✕</button>
+          </div>
         </div>
 
         {loading && <p style={{ textAlign: "center", padding: 24, color: C.oxford }}>Cargando informe...</p>}
@@ -1201,7 +1121,7 @@ function ModalInformeDeudor({ nombre, onClose }) {
             </p>
             <div style={{ overflowX: "auto", marginBottom: 16 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: C.navy }}>
+                <thead><tr style={{ background: C.headerBg }}>
                   {["Fecha","Monto","Interés/mes","Saldo","Estado","Nota"].map((h,i) =>
                     <th key={i} style={{ color: C.gold, padding: "6px 8px", textAlign: "left" }}>{h}</th>)}
                 </tr></thead>
@@ -1209,7 +1129,7 @@ function ModalInformeDeudor({ nombre, onClose }) {
                   {data.prestamos.map((p, i) => {
                     const saldo = parseFloat(p.monto||0) - parseFloat(p.capital_abonado||0);
                     return (
-                      <tr key={p.id} style={{ background: i%2===0 ? C.white : C.lightGray }}>
+                      <tr key={p.id} style={{ background: i%2===0 ? C.cardBg : C.rowAlt }}>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmtFecha(p.fecha_prestamo)}</td>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(p.monto)}</td>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(p.interes_mensual)}</td>
@@ -1235,13 +1155,13 @@ function ModalInformeDeudor({ nombre, onClose }) {
                 </p>
                 <div style={{ overflowX: "auto", marginBottom: 16 }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead><tr style={{ background: C.navy }}>
+                    <thead><tr style={{ background: C.headerBg }}>
                       {["Mes","Interés","Estado","Pagado","Fecha pago"].map((h,i) =>
                         <th key={i} style={{ color: C.gold, padding: "6px 8px", textAlign: "left" }}>{h}</th>)}
                     </tr></thead>
                     <tbody>
                       {data.cortes.slice(0, 24).map((c, i) => (
-                        <tr key={i} style={{ background: c.pagado ? C.greenLight : (i%2===0 ? C.white : C.lightGray) }}>
+                        <tr key={i} style={{ background: c.pagado ? C.greenLight : (i%2===0 ? C.cardBg : C.rowAlt) }}>
                           <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontWeight: 700 }}>{fmtPeriodo(c.periodo)}</td>
                           <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(c.monto_interes)}</td>
                           <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
@@ -1272,6 +1192,7 @@ function ModResumen({ irA }) {
   const { data: caja,      loading: lc } = useApiData("/api/caja");
   const { data: resumenIntereses }       = useApiData("/api/intereses-pendientes");
   const { data: cartera, loading: lcart }= useApiData("/api/dashboard/cartera");
+  const { data: flujoMensual }           = useApiData("/api/dashboard/flujo-mensual");
   const [deudorModal, setDeudorModal] = useState(null);
 
   if (lp || la || lc || lcart) return <p style={{ padding: 20, color: C.oxford }}>Cargando resumen...</p>;
@@ -1417,6 +1338,29 @@ function ModResumen({ irA }) {
         </Card>
       </div>
 
+      {/* Flujo de caja mensual: interés + capital cobrado, últimos 6 meses */}
+      {flujoMensual && flujoMensual.length > 0 && (
+        <Card style={{ marginBottom: 16 }}>
+          <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Flujo de caja mensual</p>
+          <p style={{ margin: "0 0 8px", fontSize: 10, color: C.oxford }}>Interés y capital cobrado, últimos 6 meses</p>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={flujoMensual.map(m => ({
+              mes: (() => { const [y, mo] = m.mes.split("-"); const meses=["","Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]; return `${meses[parseInt(mo)]} ${y.slice(2)}`; })(),
+              "Interés cobrado": parseFloat(m.interes_cobrado || 0),
+              "Capital cobrado": parseFloat(m.capital_cobrado || 0),
+            }))}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: C.oxford }}/>
+              <YAxis tick={{ fontSize: 11, fill: C.oxford }}/>
+              <Tooltip formatter={v => fmt(v)}/>
+              <Legend wrapperStyle={{ fontSize: 12 }}/>
+              <Bar dataKey="Interés cobrado" fill={C.gold} radius={[4,4,0,0]}/>
+              <Bar dataKey="Capital cobrado" fill={C.navy} radius={[4,4,0,0]}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
+
       {/* Ranking de deudores + indicadores */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <Card>
@@ -1439,7 +1383,7 @@ function ModResumen({ irA }) {
                   </div>
                 </div>
                 <div style={{ background: C.border, borderRadius: 6, height: 8 }}>
-                  <div style={{ background: i===0 ? C.orange : C.navy, width: `${(monto/maxM)*100}%`, height: 8, borderRadius: 6, transition: "width .3s" }}/>
+                  <div style={{ background: i===0 ? C.orange : C.headerBg, width: `${(monto/maxM)*100}%`, height: 8, borderRadius: 6, transition: "width .3s" }}/>
                 </div>
                 <p style={{ margin: "4px 0 0", fontSize: 10, color: C.oxford }}>👆 Clic para ver informe completo</p>
               </div>
@@ -1484,18 +1428,18 @@ function ModUsuarios() {
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   async function handleAgregar() {
-    if (!f.username || !f.nombre || !f.password || !f.rol_id) return alert("Todos los campos son requeridos");
+    if (!f.username || !f.nombre || !f.password || !f.rol_id) return toast.error("Todos los campos son requeridos");
     setSaving(true);
     try {
       await api("/api/usuarios", { method: "POST", body: JSON.stringify({ ...f, rol_id: parseInt(f.rol_id) }) });
       setF({ username: "", nombre: "", password: "", rol_id: "" }); reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
   async function handleToggleActivo(uid, activo) {
     try { await api(`/api/usuarios/${uid}`, { method: "PATCH", body: JSON.stringify({ activo: !activo }) }); reload(); }
-    catch (e) { alert("Error: " + e.message); }
+    catch (e) { toast.error(e.message); }
   }
 
   function iniciarEdicion(u) {
@@ -1510,7 +1454,7 @@ function ModUsuarios() {
         body: JSON.stringify({ correo: editF.correo, rol_id: parseInt(editF.rol_id) }),
       });
       setEditId(null); reload();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
   }
 
   if (loading) return <p style={{ padding: 20, color: C.oxford }}>Cargando usuarios...</p>;
@@ -1575,6 +1519,7 @@ function ModUsuarios() {
 
 // ── MÓDULO: CONFIGURACIÓN ─────────────────────────────────────────────────────
 function ModConfiguracion() {
+  const confirm = useConfirm();
   const [dias, setDias] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1584,6 +1529,7 @@ function ModConfiguracion() {
   const [exportando, setExportando] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
   const { data: historial, error: errorHistorial } = useApiData("/api/historial-accesos");
+  const { itemsPagina: historialPagina, Paginador: PaginadorHistorial } = usePaginacion(historial, 20);
 
   useEffect(() => {
     api("/api/configuracion/dias_anticipacion")
@@ -1593,7 +1539,7 @@ function ModConfiguracion() {
 
   async function handleGuardar() {
     const v = parseInt(dias);
-    if (isNaN(v) || v < 0) return alert("Ingresa un número válido de días");
+    if (isNaN(v) || v < 0) return toast.error("Ingresa un número válido de días");
     setSaving(true);
     try {
       await api("/api/configuracion/dias_anticipacion", {
@@ -1602,15 +1548,15 @@ function ModConfiguracion() {
       });
       setMsg("✅ Configuración guardada correctamente");
       setTimeout(() => setMsg(""), 3000);
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
   // Envía UN SOLO correo con las 3 secciones: alertas + informe + respaldo adjunto
   async function handleEnviarCorreoCombinado() {
-    if (!window.confirm(
+    if (!(await confirm(
       "¿Enviar correo completo ahora?\n\nUn solo correo con:\n• 🔔 Alertas de réditos\n• 📊 Informe ejecutivo\n• 💾 Respaldo en " + formatoBackup.toUpperCase()
-    )) return;
+    ))) return;
     setSavingCorreo(true);
     try {
       const res = await api("/api/correo/completo", {
@@ -1624,8 +1570,8 @@ function ModConfiguracion() {
         `💾 Respaldo adjunto: ${(res.formato || formatoBackup).toUpperCase()}`,
       ];
       if (errores.length) lineas.push("⚠️ Errores: " + errores.join(", "));
-      alert(lineas.join("\n"));
-    } catch (e) { alert("Error al enviar: " + e.message); }
+      toast.success(lineas.join("\n"), { style: { whiteSpace: "pre-line" }, duration: 6000 });
+    } catch (e) { toast.error("Error al enviar: " + e.message); }
     finally { setSavingCorreo(false); }
   }
 
@@ -1654,7 +1600,7 @@ function ModConfiguracion() {
       enlace.remove();
       window.URL.revokeObjectURL(url);
     } catch (e) {
-      alert("Error al exportar backup: " + e.message);
+      toast.error("Error al exportar backup: " + e.message);
     } finally {
       setExportando(false);
     }
@@ -1666,11 +1612,11 @@ function ModConfiguracion() {
     e.target.value = ""; // permite volver a elegir el mismo archivo después
     if (!archivo) return;
 
-    if (!window.confirm(
+    if (!(await confirm(
       `⚠️ Vas a restaurar la base de datos desde:\n\n"${archivo.name}"\n\n` +
       "Esto SOBRESCRIBIRÁ los datos actuales del sistema y no se puede deshacer.\n\n" +
       "¿Deseas continuar?"
-    )) return;
+    ))) return;
 
     setRestaurando(true);
     try {
@@ -1686,9 +1632,9 @@ function ModConfiguracion() {
       });
       const resultado = await respuesta.json();
       if (!respuesta.ok) throw new Error(resultado.error || `Error ${respuesta.status}`);
-      alert("✅ " + resultado.mensaje);
+      toast.success(resultado.mensaje);
     } catch (e) {
-      alert("Error al restaurar: " + e.message);
+      toast.error("Error al restaurar: " + e.message);
     } finally {
       setRestaurando(false);
     }
@@ -1814,10 +1760,10 @@ function ModConfiguracion() {
             <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
               Últimos {historial.length} intentos de inicio de sesión (exitosos y fallidos), con IP de origen.
             </p>
-            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+            <div>
               <Tabla
                 headers={["Usuario", "Resultado", "IP", "Fecha"]}
-                rows={historial.map((h, i) => [
+                rows={historialPagina.map((h, i) => [
                   h.username,
                   <Badge key={i} color={h.exito ? C.green : C.red} bg={h.exito ? C.greenLight : C.redLight}>
                     {h.exito ? "Exitoso" : "Fallido"}
@@ -1826,6 +1772,7 @@ function ModConfiguracion() {
                   h.fecha,
                 ])}
               />
+              <PaginadorHistorial/>
             </div>
           </Card>
         )}
@@ -1848,7 +1795,7 @@ function AlertasBell() {
         )}
       </button>
       {open && (
-        <div style={{ position: "absolute", top: 36, right: 0, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,.2)", width: 300, zIndex: 1000, padding: 12 }}>
+        <div style={{ position: "absolute", top: 36, right: 0, background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,.2)", width: 300, zIndex: 1000, padding: 12 }}>
           <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.navy }}>Réditos próximos a vencer</p>
           {alertas.length === 0
             ? <p style={{ fontSize: 12, color: C.oxford }}>Sin alertas pendientes.</p>
@@ -1883,7 +1830,7 @@ function ModalResetPassword({ onClose }) {
   const [msg, setMsg] = useState("");
 
   async function handleSolicitarCodigo() {
-    if (!username.trim()) return alert("Ingresa tu nombre de usuario");
+    if (!username.trim()) return toast.error("Ingresa tu nombre de usuario");
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/api/usuarios/solicitar-reset`, {
@@ -1892,19 +1839,19 @@ function ModalResetPassword({ onClose }) {
         body: JSON.stringify({ username: username.trim() }),
       });
       const data = await res.json();
-      if (!res.ok) { alert(data.error || "No se pudo enviar el código"); return; }
+      if (!res.ok) { toast.error(data.error || "No se pudo enviar el código"); return; }
       setResetToken(data.token);
       setInfoMsg(data.mensaje);
       setStep(2);
     } catch (e) {
-      alert("Error de conexión: " + e.message);
+      toast.error("Error de conexión: " + e.message);
     } finally { setSaving(false); }
   }
 
   async function handleConfirmar() {
-    if (!codigo.trim() || codigo.trim().length !== 6) return alert("Ingresa el código de 6 dígitos que llegó a tu correo");
-    if (!newPass || newPass.length < 6) return alert("La contraseña debe tener al menos 6 caracteres");
-    if (newPass !== confirmPass) return alert("Las contraseñas no coinciden");
+    if (!codigo.trim() || codigo.trim().length !== 6) return toast.error("Ingresa el código de 6 dígitos que llegó a tu correo");
+    if (!newPass || newPass.length < 6) return toast.error("La contraseña debe tener al menos 6 caracteres");
+    if (newPass !== confirmPass) return toast.error("Las contraseñas no coinciden");
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/api/usuarios/confirmar-reset`, {
@@ -1913,10 +1860,10 @@ function ModalResetPassword({ onClose }) {
         body: JSON.stringify({ token: resetToken, codigo: codigo.trim(), new_password: newPass }),
       });
       const data = await res.json();
-      if (!res.ok) { alert(data.error || "No se pudo restablecer la contraseña"); return; }
+      if (!res.ok) { toast.error(data.error || "No se pudo restablecer la contraseña"); return; }
       setMsg("✅ Contraseña restablecida correctamente. Ya puedes iniciar sesión.");
       setStep(3);
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -2056,7 +2003,7 @@ function BuscadorGlobal({ irA }) {
         style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "none", fontSize: 12, boxSizing: "border-box" }}
       />
       {abierto && q.trim().length >= 2 && (
-        <div style={{ position: "absolute", top: 34, left: 0, width: 300, background: C.white, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,.3)", zIndex: 100, maxHeight: 320, overflowY: "auto" }}>
+        <div style={{ position: "absolute", top: 34, left: 0, width: 300, background: C.cardBg, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,.3)", zIndex: 100, maxHeight: 320, overflowY: "auto" }}>
           {!hayResultados && <p style={{ margin: 0, padding: 12, fontSize: 12, color: C.oxford }}>Sin resultados</p>}
           {resultados?.clientes.length > 0 && (
             <div>
@@ -2086,6 +2033,10 @@ function BuscadorGlobal({ irA }) {
   );
 }
 
+// Debe coincidir con TOKEN_SESION_MAX_AGE del backend (8 horas)
+const SESION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+const AVISO_ANTES_MS = 15 * 60 * 1000; // avisar 15 minutos antes de que expire
+
 export default function App() {
   const [sec, setSec] = useState("resumen");
   const [user, setUser] = useState(() => {
@@ -2093,20 +2044,67 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
+  // ── MODO OSCURO ──────────────────────────────────────────────────────────
+  // C es un objeto compartido por TODA la app (cientos de componentes leen
+  // C.navy, C.oxford, etc. directo). En vez de pasar el tema por props o
+  // contexto a cada uno de esos componentes, mutamos las propiedades del
+  // MISMO objeto C con Object.assign. Como ningún componente de este archivo
+  // usa React.memo, cualquier cambio de estado en App() vuelve a ejecutar el
+  // árbol completo de componentes hijos, y cada uno lee los valores de C ya
+  // actualizados en ese re-render. Es un atajo intencional: barato y seguro
+  // aquí porque no hay memoización de por medio.
+  const [tema, setTema] = useState(() => localStorage.getItem("gonza_tema") || "claro");
+
+  useEffect(() => {
+    Object.assign(C, tema === "oscuro" ? paletaOscura : paletaClara);
+    localStorage.setItem("gonza_tema", tema);
+  }, [tema]);
+
+  function toggleTema() {
+    setTema(t => (t === "claro" ? "oscuro" : "claro"));
+  }
+
   function handleLogin(userData) {
     sessionStorage.setItem("gonza_user", JSON.stringify(userData));
+    sessionStorage.setItem("gonza_login_time", Date.now().toString());
     setUser(userData);
   }
   function handleLogout() {
     sessionStorage.removeItem("gonza_user");
+    sessionStorage.removeItem("gonza_login_time");
     setUser(null);
   }
 
-  if (!user) return <Login onLogin={handleLogin}/>;
+  // Aviso de sesión por expirar: se calcula desde la hora real de login (persiste si recargas la página)
+  useEffect(() => {
+    if (!user) return;
+    const loginTime = parseInt(sessionStorage.getItem("gonza_login_time") || Date.now(), 10);
+    const msRestantes = (loginTime + SESION_MAX_AGE_MS - AVISO_ANTES_MS) - Date.now();
+
+    if (msRestantes <= 0) return; // ya estamos dentro de la ventana de aviso o expirada, la próxima llamada a la API lo resolverá
+
+    const timer = setTimeout(() => {
+      toast(
+        "⏰ Tu sesión expirará en 15 minutos. Guarda lo que estés haciendo o vuelve a iniciar sesión para renovarla.",
+        { duration: 12000, style: { fontSize: 13, maxWidth: 380, background: C.orangeLight, color: C.oxford, border: `1px solid ${C.orange}` } }
+      );
+    }, msRestantes);
+
+    return () => clearTimeout(timer);
+  }, [user]);
+
+  if (!user) return (
+    <ConfirmProvider>
+      <Toaster position="top-right" toastOptions={{ style: { fontSize: 13, maxWidth: 380 }, success: { iconTheme: { primary: C.green, secondary: C.white } }, error: { iconTheme: { primary: C.red, secondary: C.white } } }}/>
+      <Login onLogin={handleLogin}/>
+    </ConfirmProvider>
+  );
 
   return (
+    <ConfirmProvider>
+    <Toaster position="top-right" toastOptions={{ style: { fontSize: 13, maxWidth: 380 }, success: { iconTheme: { primary: C.green, secondary: C.white } }, error: { iconTheme: { primary: C.red, secondary: C.white } } }}/>
     <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh" }}>
-      <div style={{ background: C.navy, padding: "0 20px", display: "flex", alignItems: "center", gap: 14, height: 56, boxShadow: "0 2px 6px rgba(0,0,0,.3)" }}>
+      <div style={{ background: C.headerBg, padding: "0 20px", display: "flex", alignItems: "center", gap: 14, height: 56, boxShadow: "0 2px 6px rgba(0,0,0,.3)" }}>
         <Logo size={40}/>
         <div>
           <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: 2, color: C.gold, lineHeight: 1.1 }}>JGM</div>
@@ -2119,18 +2117,22 @@ export default function App() {
           <div style={{ fontSize: 10, color: C.gold, textTransform: "uppercase" }}>{user.rol}</div>
         </div>
         <AlertasBell/>
+        <button onClick={toggleTema} title={tema === "claro" ? "Cambiar a modo oscuro" : "Cambiar a modo claro"}
+          style={{ background: "transparent", border: `1px solid ${C.gold}`, borderRadius: 8, width: 32, height: 32, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {tema === "claro" ? "🌙" : "☀️"}
+        </button>
         <Btn small color={C.orange} onClick={handleLogout}>Salir</Btn>
         <div style={{ fontSize: 11, color: "#8fa8c8", marginLeft: 14 }}>
           {new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </div>
       </div>
-      <nav style={{ background: C.oxford, display: "flex", flexWrap: "wrap", boxShadow: "0 2px 4px rgba(0,0,0,.2)" }}>
+      <nav style={{ background: C.navBg, display: "flex", flexWrap: "wrap", boxShadow: "0 2px 4px rgba(0,0,0,.2)" }}>
         {MENU.filter(m => !m.soloAdmin || user.rol === "administrador").map(m => {
           const active = sec === m.id;
           return (
             <button key={m.id} onClick={() => setSec(m.id)} style={{
               display: "flex", alignItems: "center", gap: 7, padding: "11px 18px",
-              background: active ? C.navy : "transparent", border: "none",
+              background: active ? C.headerBg : "transparent", border: "none",
               borderBottom: active ? `3px solid ${C.gold}` : "3px solid transparent",
               color: active ? C.gold : "#b0bcd4", fontSize: 13, fontWeight: active ? 700 : 400, cursor: "pointer",
             }}>
@@ -2150,5 +2152,6 @@ export default function App() {
         {sec === "config"    && <ModConfiguracion/>}
       </main>
     </div>
+    </ConfirmProvider>
   );
 }

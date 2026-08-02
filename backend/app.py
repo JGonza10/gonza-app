@@ -1487,6 +1487,46 @@ def restaurar_backup_completo():
     return jsonify({"mensaje": "Base de datos restaurada correctamente"})
 
 
+@app.route("/api/dashboard/flujo-mensual", methods=["GET"])
+@requiere_lectura("consultor")
+def get_dashboard_flujo_mensual():
+    """Ingresos cobrados (interés + abonos de capital) de los últimos 6 meses, mes a mes.
+       Útil para ver la tendencia de flujo de caja en una gráfica."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        WITH meses AS (
+            SELECT generate_series(
+                date_trunc('month', CURRENT_DATE) - INTERVAL '5 months',
+                date_trunc('month', CURRENT_DATE),
+                INTERVAL '1 month'
+            )::date AS mes
+        ),
+        interes AS (
+            SELECT date_trunc('month', fecha_pago)::date AS mes, SUM(monto_pagado) AS total
+            FROM cortes_interes
+            WHERE pagado = TRUE AND fecha_pago >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+            GROUP BY 1
+        ),
+        capital AS (
+            SELECT date_trunc('month', fecha_pago)::date AS mes, SUM(monto_capital) AS total
+            FROM pagos_prestamo
+            WHERE fecha_pago >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+            GROUP BY 1
+        )
+        SELECT meses.mes::text AS mes,
+               COALESCE(interes.total, 0) AS interes_cobrado,
+               COALESCE(capital.total, 0) AS capital_cobrado
+        FROM meses
+        LEFT JOIN interes ON interes.mes = meses.mes
+        LEFT JOIN capital ON capital.mes = meses.mes
+        ORDER BY meses.mes;
+    """)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return jsonify(rows)
+
+
 @app.route("/api/dashboard/cartera", methods=["GET"])
 @requiere_lectura("consultor")
 def get_dashboard_cartera():
@@ -2130,7 +2170,85 @@ def confirmar_reset_password():
     return jsonify({"mensaje": "Contraseña restablecida correctamente"})
 
 
-# ─── CORREO COMBINADO (alertas + informe + respaldo en un solo correo) ────────
+# ─── RECORDATORIOS AUTOMÁTICOS (disparado por un cron externo, sin login) ─────
+# No usa el sistema de tokens de sesión porque lo llama un servicio externo
+# (Railway Cron, cron-job.org, etc.), no una persona con sesión iniciada.
+# Protegido por CRON_SECRET: define esta variable de entorno en Railway con un
+# valor largo y aleatorio (ej. python -c "import secrets; print(secrets.token_hex(32))"),
+# y configura el cron para mandarlo en el header X-Cron-Secret.
+
+@app.route("/api/cron/recordatorios", methods=["GET", "POST"])
+def cron_recordatorios():
+    secreto_esperado = os.environ.get("CRON_SECRET")
+    secreto_recibido = request.headers.get("X-Cron-Secret", "")
+    if not secreto_esperado or secreto_recibido != secreto_esperado:
+        return jsonify({"error": "No autorizado"}), 403
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT valor FROM configuracion WHERE clave = 'dias_anticipacion_alerta';")
+    row = cur.fetchone()
+    dias = int(row["valor"]) if row else 2
+
+    cur.execute("""
+        SELECT deudor_nombre, monto, interes_mensual,
+               proximo_corte::text AS proximo_corte,
+               (proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos
+        WHERE (proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY proximo_corte;
+    """, (dias,))
+    alertas = cur.fetchall()
+    conn.close()
+
+    # Si no hay nada próximo a vencer, no manda correo (evita ruido diario innecesario)
+    if not alertas:
+        return jsonify({"enviado": False, "motivo": "Sin alertas pendientes hoy"})
+
+    filas_lista = []
+    for a in alertas:
+        dias_texto = "Hoy" if a["dias_para_corte"] == 0 else f"En {a['dias_para_corte']} día(s)"
+        filas_lista.append(
+            f"<tr>"
+            f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['deudor_nombre']}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #ddd'>${float(a['interes_mensual'] or 0):,.2f}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #ddd'>{a['proximo_corte']}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #ddd'>{dias_texto}</td>"
+            f"</tr>"
+        )
+    filas = "".join(filas_lista)
+    cuerpo_html = f"""
+    <div style="font-family:sans-serif;max-width:600px">
+      <h2 style="color:#0B1F4B">JGM Gonzas Systems</h2>
+      <h3 style="color:#0B1F4B;border-left:4px solid #C9A84C;padding-left:10px">
+        🔔 Recordatorio automático: {len(alertas)} rédito(s) próximo(s) a vencer
+      </h3>
+      <table style="border-collapse:collapse;font-size:13px;width:100%">
+        <tr style="background:#0B1F4B;color:#C9A84C">
+          <th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Deudor</th>
+          <th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Interés</th>
+          <th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Corte</th>
+          <th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Vence</th>
+        </tr>
+        {filas}
+      </table>
+      <p style="color:#888;font-size:11px;margin-top:20px">Correo automático diario de Sistema GONZA.</p>
+    </div>
+    """
+
+    destinatarios = get_destinatarios_admin()
+    enviados = []
+    for d in destinatarios:
+        try:
+            enviar_correo(d["correo"], f"🔔 {len(alertas)} rédito(s) próximo(s) a vencer", cuerpo_html)
+            enviados.append(d["correo"])
+        except Exception as e:
+            app.logger.warning(f"No se pudo enviar recordatorio a {d['correo']}: {e}")
+
+    return jsonify({"enviado": True, "alertas": len(alertas), "destinatarios": enviados})
+
+
+
 
 @app.route("/api/correo/completo", methods=["POST"])
 @requiere_rol("administrador")
@@ -2298,10 +2416,9 @@ def enviar_correo_completo():
 
 # ─── INFORME POR DEUDOR ───────────────────────────────────────────────────────
 
-@app.route("/api/informe-deudor/<path:nombre>", methods=["GET"])
-@requiere_lectura("consultor")
-def get_informe_deudor(nombre):
-    """Informe ejecutivo completo de un deudor: préstamos, abonos, cortes de interés."""
+def _datos_informe_deudor(nombre):
+    """Consulta y arma los datos del informe de un deudor.
+       Reutilizada por la vista JSON (para la pantalla) y la vista PDF (para descargar)."""
     conn = get_db()
     cur = conn.cursor()
 
@@ -2357,7 +2474,7 @@ def get_informe_deudor(nombre):
     total_pendiente   = sum(float(c["monto_interes"] or 0) for c in cortes if not c["pagado"])
     total_cobrado     = sum(float(c["monto_pagado"] or 0) for c in cortes)
 
-    return jsonify({
+    return {
         "deudor": nombre,
         "prestamos": prestamos,
         "cortes": cortes,
@@ -2370,7 +2487,156 @@ def get_informe_deudor(nombre):
             "prestamos_activos": len(activos),
             "prestamos_pagados": len([p for p in prestamos if p["pagado"]]),
         }
-    })
+    }
+
+
+@app.route("/api/informe-deudor/<path:nombre>", methods=["GET"])
+@requiere_lectura("consultor")
+def get_informe_deudor(nombre):
+    """Informe ejecutivo completo de un deudor: préstamos, abonos, cortes de interés."""
+    return jsonify(_datos_informe_deudor(nombre))
+
+
+def _generar_pdf_informe(datos):
+    """Construye el PDF del informe ejecutivo a partir de los datos de _datos_informe_deudor."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    NAVY = colors.HexColor("#0B1F4B")
+    GOLD = colors.HexColor("#C9A84C")
+    ORANGE = colors.HexColor("#E87722")
+    GRAY = colors.HexColor("#3B3B4F")
+    BORDE = colors.HexColor("#D4D4DC")
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=16 * mm, bottomMargin=15 * mm,
+                             leftMargin=18 * mm, rightMargin=18 * mm)
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle("titulo", parent=styles["Title"], textColor=NAVY, fontSize=17, spaceAfter=1, alignment=0)
+    sub_style = ParagraphStyle("sub", parent=styles["Normal"], textColor=GOLD, fontSize=10.5, spaceAfter=0, alignment=0)
+    seccion_style = ParagraphStyle("seccion", parent=styles["Heading2"], textColor=NAVY, fontSize=13,
+                                    spaceBefore=14, spaceAfter=6)
+
+    # Membrete: logo a la izquierda + nombre/subtítulo a la derecha (si el logo existe en el deploy)
+    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo-gonza-icon.png")
+    texto_membrete = [Paragraph("JGM Gonzas Systems", titulo_style), Paragraph("Informe ejecutivo de deudor", sub_style)]
+    if os.path.exists(logo_path):
+        logo_img = Image(logo_path, width=15 * mm, height=15 * mm)
+        membrete = Table([[logo_img, texto_membrete]], colWidths=[20 * mm, 150 * mm])
+        membrete.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (0, 0), 0)]))
+        el = [membrete, Spacer(1, 10)]
+    else:
+        el = [Paragraph("JGM Gonzas Systems", titulo_style), Paragraph("Informe ejecutivo de deudor", sub_style), Spacer(1, 10)]
+
+    el += [
+        Paragraph(f"<b>Deudor:</b> {datos['deudor']}", styles["Normal"]),
+        Paragraph(f"<b>Fecha del informe:</b> {date.today().strftime('%d/%m/%Y')}", styles["Normal"]),
+        Spacer(1, 10),
+    ]
+
+    r = datos["resumen"]
+    resumen_data = [
+        ["Total prestado (activos)", f"${r['total_prestado']:,.2f}"],
+        ["Interés mensual esperado", f"${r['total_interes_mensual']:,.2f}"],
+        ["Interés pendiente acumulado", f"${r['interes_pendiente_acumulado']:,.2f}"],
+        ["Interés cobrado (histórico)", f"${r['interes_cobrado_total']:,.2f}"],
+        ["Préstamos activos", str(r["prestamos_activos"])],
+        ["Préstamos pagados", str(r["prestamos_pagados"])],
+    ]
+    tabla_resumen = Table(resumen_data, colWidths=[260, 150])
+    tabla_resumen.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8EDF5")),
+        ("TEXTCOLOR", (0, 0), (-1, -1), GRAY),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("GRID", (0, 0), (-1, -1), 0.5, BORDE),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
+    ]))
+    el.append(tabla_resumen)
+
+    if datos["prestamos"]:
+        el.append(Paragraph("Préstamos", seccion_style))
+        filas = [["Fecha", "Monto", "Interés mensual", "Saldo capital", "Estado"]]
+        for p in datos["prestamos"]:
+            filas.append([
+                p["fecha_prestamo"] or "—",
+                f"${float(p['monto'] or 0):,.2f}",
+                f"${float(p['interes_mensual'] or 0):,.2f}",
+                f"${float(p['saldo_capital'] or 0):,.2f}",
+                "Pagado" if p["pagado"] else "Activo",
+            ])
+        t = Table(filas, colWidths=[70, 80, 90, 90, 60])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), GOLD),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("GRID", (0, 0), (-1, -1), 0.5, BORDE),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F4F6")]),
+        ]))
+        el.append(t)
+
+    pendientes = [c for c in datos["cortes"] if not c["pagado"]]
+    if pendientes:
+        el.append(Paragraph("Intereses pendientes de cobro", seccion_style))
+        filas = [["Periodo", "Monto interés", "Tipo de pago"]]
+        for c in pendientes:
+            filas.append([c["periodo"] or "—", f"${float(c['monto_interes'] or 0):,.2f}", c.get("tipo_pago") or "—"])
+        t = Table(filas, colWidths=[100, 100, 140])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), ORANGE),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("GRID", (0, 0), (-1, -1), 0.5, BORDE),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FEF0E3")]),
+        ]))
+        el.append(t)
+
+    if datos["abonos"]:
+        el.append(Paragraph("Últimos abonos de capital", seccion_style))
+        filas = [["Fecha", "Interés", "Capital", "Nota"]]
+        for a in datos["abonos"][:15]:
+            filas.append([
+                a["fecha_pago"] or "—",
+                f"${float(a['monto_interes'] or 0):,.2f}",
+                f"${float(a['monto_capital'] or 0):,.2f}",
+                (a.get("nota") or "—")[:40],
+            ])
+        t = Table(filas, colWidths=[70, 80, 80, 160])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), GOLD),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("GRID", (0, 0), (-1, -1), 0.5, BORDE),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F4F6")]),
+        ]))
+        el.append(t)
+
+    doc.build(el)
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+    return pdf_bytes
+
+
+@app.route("/api/informe-deudor/<path:nombre>/pdf", methods=["GET"])
+@requiere_lectura("consultor")
+def get_informe_deudor_pdf(nombre):
+    """Descarga el informe ejecutivo del deudor como PDF con el membrete de la empresa."""
+    datos = _datos_informe_deudor(nombre)
+    pdf_bytes = _generar_pdf_informe(datos)
+    archivo = f"informe_{nombre.strip().replace(' ', '_')}_{date.today().isoformat()}.pdf"
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{archivo}"'},
+    )
 
 
 if __name__ == "__main__":
