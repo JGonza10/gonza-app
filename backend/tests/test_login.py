@@ -8,6 +8,7 @@ def _usuario(**over):
         "id": 1, "username": "ana", "nombre": "Ana",
         "password_hash": generate_password_hash("clave-correcta"),
         "activo": True, "cliente_id": None, "rol": "administrador",
+        "totp_secret": None, "totp_habilitado": False,
     }
     base.update(over)
     return base

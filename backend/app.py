@@ -11,6 +11,7 @@ CAMBIOS v2 (alineación con "Sistema de consulta de pagos"):
 """
 
 import os
+import re
 import secrets
 import psycopg2
 import psycopg2.extras
@@ -24,6 +25,10 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import check_password_hash, generate_password_hash
 import requests as http_requests
+import pyotp
+import qrcode
+import io
+import base64
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
@@ -109,6 +114,17 @@ def _json_default(o):
 
 app.json.default = _json_default
 
+
+def _money(valor, default="0"):
+    """Convierte un valor que llega del JSON de la petición (string, int,
+       float o None) a Decimal seguro para dinero, redondeado a centavos.
+       Usar SIEMPRE al leer montos de `data` antes de guardarlos — nunca
+       float(), que puede arrastrar imprecisión binaria (float(1234.55) no
+       siempre es exactamente 1234.55). Pasar por str() primero evita eso."""
+    if valor is None or valor == "":
+        valor = default
+    return Decimal(str(valor)).quantize(Decimal("0.01"))
+
 # ─── CONEXIÓN A LA BASE DE DATOS ─────────────────────────────────────────────
 # DATABASE_URL viene de la variable de entorno (Railway la inyecta automático)
 # En local, la defines en .env o en tu terminal
@@ -166,6 +182,12 @@ def _asegurar_tablas_auxiliares():
             CREATE INDEX IF NOT EXISTS idx_auditoria_tabla_registro
             ON auditoria (tabla, registro_id, fecha DESC);
         """)
+
+        # 2FA (TOTP) para administradores: el secreto se guarda solo tras
+        # confirmar un código válido (totp_habilitado pasa a TRUE en ese momento).
+        cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(32);")
+        cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_habilitado BOOLEAN NOT NULL DEFAULT FALSE;")
+
         conn.commit()
         conn.close()
     except Exception as e:
@@ -242,7 +264,7 @@ def login():
     cur = conn.cursor()
     cur.execute("""
         SELECT u.id, u.username, u.nombre, u.password_hash, u.activo,
-               u.cliente_id, r.nombre AS rol
+               u.cliente_id, r.nombre AS rol, u.totp_secret, u.totp_habilitado
         FROM usuarios u
         JOIN roles r ON u.rol_id = r.id
         WHERE u.username = %s;
@@ -261,6 +283,16 @@ def login():
     if not check_password_hash(usuario["password_hash"], data.get("password", "")):
         _registrar_acceso(username, False)
         return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
+
+    # Segundo factor (TOTP): si el usuario lo tiene activado, el código va en
+    # el mismo POST (data.totp_code). Si falta o es incorrecto, se avisa con
+    # requiere_2fa para que el frontend muestre ese campo sin pedir de nuevo
+    # usuario/contraseña.
+    if usuario["totp_habilitado"]:
+        codigo = (data.get("totp_code") or "").strip()
+        if not codigo or not pyotp.TOTP(usuario["totp_secret"]).verify(codigo, valid_window=1):
+            _registrar_acceso(username, False)
+            return jsonify({"error": "Código de verificación inválido o faltante", "requiere_2fa": True}), 401
 
     _registrar_acceso(username, True)
     return jsonify({
@@ -351,6 +383,90 @@ def get_historial_accesos():
     rows = cur.fetchall()
     conn.close()
     return jsonify(list(rows))
+
+
+# ─── RUTAS: 2FA (TOTP) — solo administradores, sobre su propia cuenta ────────
+
+@app.route("/api/2fa/estado", methods=["GET"])
+@requiere_rol("administrador")
+def get_2fa_estado():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT totp_habilitado FROM usuarios WHERE username = %s;", (g.username,))
+    row = cur.fetchone()
+    conn.close()
+    return jsonify({"habilitado": bool(row and row["totp_habilitado"])})
+
+
+@app.route("/api/2fa/generar", methods=["POST"])
+@requiere_rol("administrador")
+def generar_2fa():
+    """Genera un secreto TOTP nuevo (aún no activo) y el QR para escanearlo
+       con Google Authenticator / Authy. Queda pendiente hasta /2fa/activar."""
+    secreto = pyotp.random_base32()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE usuarios SET totp_secret = %s, totp_habilitado = FALSE WHERE username = %s;",
+        (secreto, g.username),
+    )
+    conn.commit()
+    conn.close()
+
+    uri = pyotp.TOTP(secreto).provisioning_uri(name=g.username, issuer_name="Sistema GONZA")
+    qr = qrcode.make(uri)
+    buffer = io.BytesIO()
+    qr.save(buffer, format="PNG")
+    qr_base64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    return jsonify({"secreto": secreto, "qr": f"data:image/png;base64,{qr_base64}"})
+
+
+@app.route("/api/2fa/activar", methods=["POST"])
+@requiere_rol("administrador")
+def activar_2fa():
+    data = request.get_json()
+    codigo = (data.get("codigo") or "").strip()
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT totp_secret FROM usuarios WHERE username = %s;", (g.username,))
+    row = cur.fetchone()
+    if not row or not row["totp_secret"]:
+        conn.close()
+        return jsonify({"error": "Primero genera un código QR con /2fa/generar"}), 400
+
+    if not pyotp.TOTP(row["totp_secret"]).verify(codigo, valid_window=1):
+        conn.close()
+        return jsonify({"error": "Código incorrecto"}), 400
+
+    cur.execute("UPDATE usuarios SET totp_habilitado = TRUE WHERE username = %s;", (g.username,))
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Verificación en dos pasos activada"})
+
+
+@app.route("/api/2fa/desactivar", methods=["POST"])
+@requiere_rol("administrador")
+def desactivar_2fa():
+    """Requiere la contraseña actual (no el código TOTP) para desactivar,
+       por si el usuario perdió acceso a su app de autenticación."""
+    data = request.get_json()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT password_hash FROM usuarios WHERE username = %s;", (g.username,))
+    row = cur.fetchone()
+    if not row or not check_password_hash(row["password_hash"], data.get("password", "")):
+        conn.close()
+        return jsonify({"error": "Contraseña incorrecta"}), 401
+
+    cur.execute(
+        "UPDATE usuarios SET totp_habilitado = FALSE, totp_secret = NULL WHERE username = %s;",
+        (g.username,),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"mensaje": "Verificación en dos pasos desactivada"})
 
 
 # ─── RUTAS: USUARIOS ──────────────────────────────────────────────────────────
@@ -577,8 +693,8 @@ def add_prestamo():
         deudor_nombre,
         data["cliente_id"],
         data["fecha_prestamo"],
-        data["monto"],
-        data["interes_mensual"],
+        _money(data["monto"]),
+        _money(data["interes_mensual"]),
         data.get("nota", "")
     ))
     nuevo_id = cur.fetchone()["id"]
@@ -595,12 +711,13 @@ def update_prestamo(pid):
     conn = get_db()
     cur = conn.cursor()
 
+    campos_dinero = ("monto", "interes_mensual")
     campos = []
     valores = []
     for campo in ("fecha_prestamo", "monto", "interes_mensual", "nota", "activo"):
         if campo in data:
             campos.append(f"{campo} = %s")
-            valores.append(data[campo])
+            valores.append(_money(data[campo]) if campo in campos_dinero else data[campo])
 
     if not campos:
         conn.close()
@@ -648,8 +765,8 @@ def marcar_pagado(pid):
 def registrar_abono(pid):
     """Registra un abono parcial (interés y/o capital) a un préstamo."""
     data = request.get_json()
-    monto_interes = float(data.get("monto_interes", 0))
-    monto_capital = float(data.get("monto_capital", 0))
+    monto_interes = _money(data.get("monto_interes", 0))
+    monto_capital = _money(data.get("monto_capital", 0))
     fecha_pago = data["fecha_pago"]
     tipo_pago = data.get("tipo_pago", "transferencia")
     nota = data.get("nota", "")
@@ -776,7 +893,7 @@ def pagar_corte_interes(pid, cid):
     Body: { fecha_pago, monto_pagado, tipo_pago, nota }
     """
     data = request.get_json()
-    monto_pagado = float(data.get("monto_pagado", 0))
+    monto_pagado = _money(data.get("monto_pagado", 0))
     fecha_pago = data.get("fecha_pago")
     tipo_pago = data.get("tipo_pago", "transferencia")
     nota = data.get("nota", "")
@@ -986,7 +1103,7 @@ def add_ahorro():
             RETURNING id;
         """, (
             data["cliente_id"],
-            data.get("cantidad", 0),
+            _money(data.get("cantidad", 0)),
             data.get("fecha") or date.today().isoformat(),
             data.get("nota", ""),
         ))
@@ -1017,7 +1134,7 @@ def update_ahorro(aid):
     for campo in ("cantidad", "nota", "activo", "fecha"):
         if campo in data:
             campos.append(f"{campo} = %s")
-            valores.append(data[campo])
+            valores.append(_money(data[campo]) if campo == "cantidad" else data[campo])
 
     valores.append(aid)
     cur.execute(f"UPDATE ahorros SET {', '.join(campos)} WHERE id = %s;", valores)
@@ -1104,7 +1221,7 @@ def add_caja():
     """, (
         participante,
         data["cliente_id"],
-        data.get("cuota", 0),
+        _money(data.get("cuota", 0)),
         data.get("fecha_inicio", ""),
         data.get("fecha"),
         data.get("nota", ""),
@@ -1112,7 +1229,7 @@ def add_caja():
     nuevo_id = cur.fetchone()["id"]
 
     # Si se proporcionó un capital inicial, se registra como el primer movimiento real
-    capital_inicial = float(data.get("capital", 0) or 0)
+    capital_inicial = _money(data.get("capital", 0))
     if capital_inicial > 0:
         cur.execute("""
             INSERT INTO caja_movimientos (caja_id, fecha, monto, nota)
@@ -1136,7 +1253,7 @@ def update_caja(cid):
     for campo in ("participante", "cuota", "fecha_inicio", "fecha", "nota", "activo"):
         if campo in data:
             campos.append(f"{campo} = %s")
-            valores.append(data[campo])
+            valores.append(_money(data[campo]) if campo == "cuota" else data[campo])
 
     if not campos:
         conn.close()
@@ -1184,11 +1301,11 @@ def add_plazo():
         RETURNING id;
     """, (
         data["material"],
-        data.get("costo"),
+        _money(data["costo"]) if data.get("costo") is not None else None,
         data["meses_total"],
         data.get("meses_pagados", 0),
-        data.get("cuota"),
-        data.get("abonado", 0),
+        _money(data["cuota"]) if data.get("cuota") is not None else None,
+        _money(data.get("abonado", 0)),
     ))
     nuevo_id = cur.fetchone()["id"]
     _registrar_auditoria(cur, "pagos_plazos", nuevo_id, "crear", detalle=data)
@@ -1203,12 +1320,16 @@ def update_plazo(pid):
     conn = get_db()
     cur = conn.cursor()
 
+    campos_dinero = ("costo", "cuota", "abonado")
     campos = []
     valores = []
     for campo in ("material", "costo", "meses_total", "meses_pagados", "cuota", "abonado", "nota", "fecha", "activo"):
         if campo in data:
             campos.append(f"{campo} = %s")
-            valores.append(data[campo])
+            if campo in campos_dinero:
+                valores.append(_money(data[campo]) if data[campo] is not None else None)
+            else:
+                valores.append(data[campo])
 
     if not campos:
         conn.close()
@@ -1611,10 +1732,12 @@ def get_dashboard_cartera():
     dias_anticipacion = int(row["valor"]) if row else 2
 
     cur.execute("""
-        SELECT id, deudor_nombre, monto, interes_mensual,
-               proximo_corte::text AS proximo_corte,
-               (proximo_corte - CURRENT_DATE) AS dias_para_corte
-        FROM v_alertas_prestamos;
+        SELECT v.id, v.deudor_nombre, v.monto, v.interes_mensual,
+               v.proximo_corte::text AS proximo_corte,
+               (v.proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos v
+        JOIN prestamos p ON p.id = v.id
+        WHERE p.eliminado_en IS NULL;
     """)
     rows = cur.fetchall()
     conn.close()
@@ -1645,13 +1768,14 @@ def get_alertas():
     dias = int(row["valor"]) if row else 2
 
     cur.execute("""
-        SELECT id, deudor_nombre, monto, interes_mensual,
-               fecha_base::text AS fecha_base,
-               proximo_corte::text AS proximo_corte,
-               (proximo_corte - CURRENT_DATE) AS dias_para_corte
-        FROM v_alertas_prestamos
-        WHERE (proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
-        ORDER BY proximo_corte;
+        SELECT v.id, v.deudor_nombre, v.monto, v.interes_mensual,
+               v.fecha_base::text AS fecha_base,
+               v.proximo_corte::text AS proximo_corte,
+               (v.proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos v
+        JOIN prestamos p ON p.id = v.id
+        WHERE p.eliminado_en IS NULL AND (v.proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY v.proximo_corte;
     """, (dias,))
     rows = cur.fetchall()
     conn.close()
@@ -1697,6 +1821,51 @@ def get_destinatarios_admin():
     rows = cur.fetchall()
     conn.close()
     return list(rows)
+
+
+# ─── RECORDATORIOS POR WHATSAPP (Twilio) ─────────────────────────────────────
+# Requiere TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_WHATSAPP_FROM en las
+# variables de entorno (Railway). TWILIO_WHATSAPP_FROM es el número de Twilio
+# con el prefijo "whatsapp:", ej. "whatsapp:+14155238886" (el del sandbox).
+# Sin esas variables, el envío se omite y se reporta en la respuesta en vez
+# de fallar silenciosamente — igual que RESEND_API_KEY/CRON_SECRET.
+
+def _normalizar_telefono_mx(telefono):
+    """Deja solo dígitos y antepone el código de país de México (52) si el
+       número no lo trae ya. Devuelve None si no hay suficientes dígitos."""
+    if not telefono:
+        return None
+    digitos = re.sub(r"\D", "", telefono)
+    if len(digitos) == 10:
+        digitos = "52" + digitos
+    return f"+{digitos}" if len(digitos) >= 10 else None
+
+
+def enviar_whatsapp(telefono, mensaje):
+    """Envía un mensaje de WhatsApp vía la API de Twilio.
+       Devuelve (True, None) si se envió, o (False, motivo) si no."""
+    sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    token = os.environ.get("TWILIO_AUTH_TOKEN")
+    remitente = os.environ.get("TWILIO_WHATSAPP_FROM")
+    if not (sid and token and remitente):
+        return False, "WhatsApp no configurado (falta TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_WHATSAPP_FROM)"
+
+    numero = _normalizar_telefono_mx(telefono)
+    if not numero:
+        return False, "Sin teléfono válido registrado"
+
+    try:
+        resp = http_requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+            auth=(sid, token),
+            data={"From": remitente, "To": f"whatsapp:{numero}", "Body": mensaje},
+            timeout=10,
+        )
+        if resp.status_code >= 300:
+            return False, f"Twilio respondió {resp.status_code}: {resp.text[:200]}"
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 # ─── PROTECCIÓN CRON JOB ─────────────────────────────────────────────────────
@@ -1749,12 +1918,13 @@ def enviar_correos_alertas():
 
     # Alertas activas
     cur.execute("""
-        SELECT deudor_nombre, monto, interes_mensual,
-               proximo_corte::text AS proximo_corte,
-               (proximo_corte - CURRENT_DATE) AS dias_para_corte
-        FROM v_alertas_prestamos
-        WHERE (proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
-        ORDER BY proximo_corte;
+        SELECT v.deudor_nombre, v.monto, v.interes_mensual,
+               v.proximo_corte::text AS proximo_corte,
+               (v.proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos v
+        JOIN prestamos p ON p.id = v.id
+        WHERE p.eliminado_en IS NULL AND (v.proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY v.proximo_corte;
     """, (dias,))
     alertas = cur.fetchall()
     conn.close()
@@ -1795,6 +1965,55 @@ def enviar_correos_alertas():
             enviados += 1
         except Exception as e:
             errores.append(f"{d['correo']}: {str(e)}")
+
+    return jsonify({"enviados": enviados, "errores": errores, "alertas": len(alertas)})
+
+
+@app.route("/api/alertas/enviar-whatsapp", methods=["POST"])
+@requiere_cron
+def enviar_whatsapp_alertas():
+    """Envía un recordatorio de WhatsApp directo a cada deudor con un corte
+       de interés próximo a vencer (dentro de los días de anticipación
+       configurados). A diferencia de /enviar-correos (que avisa al equipo),
+       este le escribe al cliente mismo."""
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT valor FROM configuracion WHERE clave = 'dias_anticipacion_alerta';")
+    row = cur.fetchone()
+    dias = int(row["valor"]) if row else 2
+
+    cur.execute("""
+        SELECT p.deudor_nombre, p.interes_mensual, c.telefono,
+               v.proximo_corte::text AS proximo_corte,
+               (v.proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos v
+        JOIN prestamos p ON p.id = v.id
+        JOIN clientes c ON c.id = p.cliente_id
+        WHERE p.eliminado_en IS NULL AND c.eliminado_en IS NULL
+          AND (v.proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY v.proximo_corte;
+    """, (dias,))
+    alertas = cur.fetchall()
+    conn.close()
+
+    if not alertas:
+        return jsonify({"mensaje": "Sin alertas pendientes, no se enviaron mensajes"})
+
+    enviados = 0
+    errores = []
+    for a in alertas:
+        cuando = "hoy" if a["dias_para_corte"] == 0 else f"en {a['dias_para_corte']} día(s)"
+        mensaje = (
+            f"Hola {a['deudor_nombre']}, te recordamos que tu pago de interés de "
+            f"${a['interes_mensual']} vence {cuando} ({a['proximo_corte']}). "
+            "Gracias por tu puntualidad. — Sistema GONZA"
+        )
+        ok, motivo = enviar_whatsapp(a["telefono"], mensaje)
+        if ok:
+            enviados += 1
+        else:
+            errores.append(f"{a['deudor_nombre']}: {motivo}")
 
     return jsonify({"enviados": enviados, "errores": errores, "alertas": len(alertas)})
 
@@ -2043,7 +2262,7 @@ def add_movimiento_caja(cid):
     """
     data = request.get_json()
 
-    monto = float(data.get("monto", 0))
+    monto = _money(data.get("monto", 0))
     if monto <= 0:
         return jsonify({"error": "El monto debe ser mayor a 0"}), 400
 
@@ -2085,7 +2304,7 @@ def update_movimiento_caja(cid, mid):
     for campo in ("fecha", "monto", "nota"):
         if campo in data:
             campos.append(f"{campo} = %s")
-            valores.append(data[campo])
+            valores.append(_money(data[campo]) if campo == "monto" else data[campo])
 
     if not campos:
         return jsonify({"error": "Nada para actualizar"}), 400
@@ -2266,12 +2485,13 @@ def cron_recordatorios():
     dias = int(row["valor"]) if row else 2
 
     cur.execute("""
-        SELECT deudor_nombre, monto, interes_mensual,
-               proximo_corte::text AS proximo_corte,
-               (proximo_corte - CURRENT_DATE) AS dias_para_corte
-        FROM v_alertas_prestamos
-        WHERE (proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
-        ORDER BY proximo_corte;
+        SELECT v.deudor_nombre, v.monto, v.interes_mensual,
+               v.proximo_corte::text AS proximo_corte,
+               (v.proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos v
+        JOIN prestamos p ON p.id = v.id
+        WHERE p.eliminado_en IS NULL AND (v.proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY v.proximo_corte;
     """, (dias,))
     alertas = cur.fetchall()
     conn.close()
@@ -2346,12 +2566,13 @@ def enviar_correo_completo():
     dias = int(row["valor"]) if row else 2
 
     cur.execute("""
-        SELECT deudor_nombre, monto, interes_mensual,
-               proximo_corte::text AS proximo_corte,
-               (proximo_corte - CURRENT_DATE) AS dias_para_corte
-        FROM v_alertas_prestamos
-        WHERE (proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
-        ORDER BY proximo_corte;
+        SELECT v.deudor_nombre, v.monto, v.interes_mensual,
+               v.proximo_corte::text AS proximo_corte,
+               (v.proximo_corte - CURRENT_DATE) AS dias_para_corte
+        FROM v_alertas_prestamos v
+        JOIN prestamos p ON p.id = v.id
+        WHERE p.eliminado_en IS NULL AND (v.proximo_corte - CURRENT_DATE) BETWEEN 0 AND %s
+        ORDER BY v.proximo_corte;
     """, (dias,))
     alertas = cur.fetchall()
 
@@ -2596,7 +2817,7 @@ def _generar_pdf_informe(datos):
                                     spaceBefore=14, spaceAfter=6)
 
     # Membrete: logo a la izquierda + nombre/subtítulo a la derecha (si el logo existe en el deploy)
-    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo-gonza-icon.png")
+    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "gonza-systems.png")
     texto_membrete = [Paragraph("JGM Gonzas Systems", titulo_style), Paragraph("Informe ejecutivo de deudor", sub_style)]
     if os.path.exists(logo_path):
         logo_img = Image(logo_path, width=15 * mm, height=15 * mm)
@@ -2706,6 +2927,124 @@ def get_informe_deudor_pdf(nombre):
     datos = _datos_informe_deudor(nombre)
     pdf_bytes = _generar_pdf_informe(datos)
     archivo = f"informe_{nombre.strip().replace(' ', '_')}_{date.today().isoformat()}.pdf"
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{archivo}"'},
+    )
+
+
+# ─── PAGARÉ / CONTRATO EN PDF POR PRÉSTAMO ────────────────────────────────────
+
+def _generar_pdf_pagare(prestamo):
+    """Construye el PDF de un pagaré simple para un préstamo. `prestamo` debe
+       traer deudor_nombre, monto, interes_mensual, fecha_prestamo, telefono
+       y direccion (ver la consulta en descargar_pagare)."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+
+    NAVY = colors.HexColor("#0B1F4B")
+    GOLD = colors.HexColor("#C9A84C")
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=18 * mm, bottomMargin=18 * mm,
+                             leftMargin=22 * mm, rightMargin=22 * mm)
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle("titulo", parent=styles["Title"], textColor=NAVY, fontSize=18, alignment=TA_CENTER, spaceAfter=2)
+    sub_style = ParagraphStyle("sub", parent=styles["Normal"], textColor=GOLD, fontSize=10, alignment=TA_CENTER, spaceAfter=18)
+    cuerpo_style = ParagraphStyle("cuerpo", parent=styles["Normal"], fontSize=10.5, leading=17, spaceAfter=12, alignment=TA_JUSTIFY)
+    firma_style = ParagraphStyle("firma", parent=styles["Normal"], fontSize=10, alignment=TA_CENTER)
+
+    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "gonza-systems.png")
+    el = []
+    if os.path.exists(logo_path):
+        el.append(Image(logo_path, width=20 * mm, height=20 * mm, hAlign="CENTER"))
+        el.append(Spacer(1, 8))
+
+    el.append(Paragraph("PAGARÉ", titulo_style))
+    el.append(Paragraph("JGM Gonzas Systems — Sistema GONZA", sub_style))
+
+    nombre_deudor = prestamo["deudor_nombre"]
+    monto = float(prestamo["monto"] or 0)
+    interes = float(prestamo["interes_mensual"] or 0)
+    fecha_prestamo = fmt_fecha_es(prestamo["fecha_prestamo"])
+    telefono = prestamo.get("telefono") or "no registrado"
+    direccion = prestamo.get("direccion") or "no registrado"
+
+    el.append(Paragraph(
+        f"Por medio del presente pagaré, yo, <b>{nombre_deudor}</b>, con teléfono {telefono} y domicilio en "
+        f"{direccion}, reconozco deber y me obligo a pagar incondicionalmente a <b>JGM Gonzas Systems</b>, o a "
+        f"quien sus derechos represente, la cantidad de <b>${monto:,.2f} (M.N.)</b>, recibida en calidad de "
+        f"préstamo con fecha {fecha_prestamo}.",
+        cuerpo_style,
+    ))
+    el.append(Paragraph(
+        f"Sobre el saldo insoluto de esta deuda se generará un interés mensual de <b>${interes:,.2f}</b>, "
+        "pagadero mes a mes en la fecha de corte correspondiente, hasta la liquidación total del capital adeudado.",
+        cuerpo_style,
+    ))
+    el.append(Paragraph(
+        "En caso de incumplimiento de pago, acepto cubrir los gastos de cobranza que se originen. "
+        "Este documento es negociable conforme a la legislación aplicable en materia de títulos de crédito.",
+        cuerpo_style,
+    ))
+    el.append(Spacer(1, 20))
+    el.append(Paragraph("Lugar y fecha: ______________________________", cuerpo_style))
+    el.append(Spacer(1, 40))
+
+    firmas = Table(
+        [
+            ["_______________________________", "_______________________________"],
+            [Paragraph("Firma del deudor", firma_style), Paragraph("Firma del acreedor", firma_style)],
+            [Paragraph(nombre_deudor, firma_style), Paragraph("JGM Gonzas Systems", firma_style)],
+        ],
+        colWidths=[220, 220],
+    )
+    firmas.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 4), ("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+    el.append(firmas)
+
+    doc.build(el)
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+    return pdf_bytes
+
+
+def fmt_fecha_es(fecha):
+    if not fecha:
+        return "—"
+    meses = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+             "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    texto = fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha)
+    y, m, d = texto[:10].split("-")
+    return f"{int(d)} de {meses[int(m)]} de {y}"
+
+
+@app.route("/api/prestamos/<int:pid>/pagare", methods=["GET"])
+@requiere_lectura("consultor")
+def descargar_pagare(pid):
+    """Genera un pagaré/contrato en PDF para un préstamo específico."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT p.deudor_nombre, p.monto, p.interes_mensual, p.fecha_prestamo::text AS fecha_prestamo,
+               c.telefono, c.direccion
+        FROM prestamos p
+        LEFT JOIN clientes c ON c.id = p.cliente_id
+        WHERE p.id = %s AND p.eliminado_en IS NULL;
+    """, (pid,))
+    prestamo = cur.fetchone()
+    conn.close()
+
+    if not prestamo:
+        return jsonify({"error": "Préstamo no encontrado"}), 404
+
+    pdf_bytes = _generar_pdf_pagare(prestamo)
+    archivo = f"pagare_{prestamo['deudor_nombre'].replace(' ', '_')}_{pid}.pdf"
     return Response(
         pdf_bytes,
         mimetype="application/pdf",
