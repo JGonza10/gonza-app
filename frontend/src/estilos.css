@@ -76,6 +76,8 @@
 /* ── BASE ────────────────────────────────────────────────────────────────── */
 * { box-sizing:border-box; margin:0; padding:0 }
 
+html, body { max-width:100%; overflow-x:hidden }
+
 body {
   font-family:var(--f); font-size:14px; line-height:1.5; color:var(--text);
   background:var(--fondo-app); background-attachment:fixed; min-height:100vh;
@@ -272,6 +274,21 @@ h1,h2,h3 { font-weight:800; letter-spacing:-.02em; line-height:1.15 }
   .hdr h1 { font-size:22px }
   .kpis { grid-template-columns:1fr 1fr; gap:10px }
   .kpi .v { font-size:21px }
+
+  /* Formularios horizontales y barras "TOTALES GRUPO" de App.jsx: en vez de
+     comprimirse en columnas ilegibles, se apilan en una sola columna. El
+     !important es necesario porque el grid-template-columns de escritorio
+     viene como estilo inline (style=), que gana sobre una clase normal. */
+  .grid-resp { grid-template-columns:1fr !important; }
+
+  /* Encabezado superior: en vez de desbordarse horizontalmente, envuelve a
+     una segunda fila y deja de forzar una altura fija. */
+  .app-header { flex-wrap:wrap !important; height:auto !important; padding:10px 14px !important; row-gap:8px; }
+  .app-header > .sp { flex:0 0 100% !important; height:0 }
+
+  /* Texto secundario que solo estorba en una pantalla angosta. */
+  .ocultar-movil { display:none !important; }
+
   .mob {
     display:flex; position:fixed; left:0; right:0; bottom:0;
     background:rgba(16,25,41,.97); backdrop-filter:blur(10px);
@@ -281,6 +298,10 @@ h1,h2,h3 { font-weight:800; letter-spacing:-.02em; line-height:1.15 }
   .mob button { flex:0 0 62px; background:none; border:0; color:#8B9AB3; padding:6px 2px; font-size:9.5px; cursor:pointer }
   .mob button .ic { display:block; font-size:17px; margin-bottom:3px }
   .mob button.on { color:var(--blue) }
+}
+
+@media (max-width:480px) {
+  .app-header .buscador-global { flex-basis:100%; order:3; margin-right:0 !important; }
 }
 
 @media print {

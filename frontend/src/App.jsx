@@ -40,7 +40,7 @@ function ModalAbono({ prestamo, onClose, onSaved }) {
       <p style={{ margin: "0 0 12px", fontSize: 12, color: C.oxford }}>
         Préstamo: <b>{fmt(prestamo.monto)}</b> · Abonado: <b>{fmt(prestamo.capital_abonado || 0)}</b> · Saldo: <b style={{ color: C.orange }}>{fmt(saldoRestante)}</b>
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Inp label="Fecha del abono" type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}/>
         <Inp label="Abono al interés ($)" type="number" value={montoInteres} onChange={e => setMontoInteres(e.target.value)}/>
         <Inp label="Abono al capital ($)" type="number" value={montoCapital} onChange={e => setMontoCapital(e.target.value)}/>
@@ -86,7 +86,7 @@ function ModalEditarPrestamo({ prestamo, onClose, onSaved }) {
         <Btn color={C.green} onClick={handleGuardar} loading={saving}>Guardar cambios</Btn>
         <Btn color={C.oxford} onClick={onClose}>Cancelar</Btn>
       </>}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Inp label="Fecha del préstamo" type="date" value={fecha} onChange={e => setFecha(e.target.value)}/>
         <Inp label="Monto ($)" type="number" value={monto} onChange={e => setMonto(e.target.value)}/>
         <Inp label="Interés mensual ($)" type="number" value={interes} onChange={e => setInteres(e.target.value)}/>
@@ -163,7 +163,7 @@ function ModalCortesInteres({ prestamo, onClose }) {
               Registrar pago — {fmtPeriodo(corteSeleccionado.periodo)}
               <span style={{ marginLeft: 8, color: C.oxford, fontWeight: 400 }}>Esperado: {fmt(corteSeleccionado.monto_interes)}</span>
             </p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, alignItems: "end" }}>
+            <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, alignItems: "end" }}>
               <Inp label="Fecha de pago" type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}/>
               <Inp label="Monto pagado ($)" type="number" value={montoPagado}
                 placeholder={String(corteSeleccionado.monto_interes)}
@@ -348,7 +348,7 @@ function ModPrestamos() {
       {/* Formulario horizontal */}
       <Card style={{ marginBottom: 16 }}>
         <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Registrar préstamo</p>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 2fr auto", gap: 10, alignItems: "end" }}>
+        <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 2fr auto", gap: 10, alignItems: "end" }}>
           <Sel label="Cliente" value={f.cliente_id} onChange={s("cliente_id")}>
             <option value="">Selecciona un cliente</option>
             {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat} {c.apellido_mat || ""}</option>)}
@@ -410,7 +410,7 @@ function ModPrestamos() {
           })}
         />
         <PaginadorActivos/>
-        <div style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+        <div className="grid-resp" style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.oxford }}>TOTALES GRUPO</div>
           <div style={{ fontSize: 12 }}>Capital: <span style={{ fontWeight: 700, color: C.navy }}>{fmt(totalCartera)}</span></div>
           <div style={{ fontSize: 12 }}>Con interés: <span style={{ fontWeight: 700, color: C.green }}>{fmt(totalCartera + totalInteresesEsperados)}</span></div>
@@ -504,7 +504,7 @@ function ModClientes() {
       {/* Formulario HORIZONTAL en una sola Card */}
       <Card style={{ marginBottom: 16 }}>
         <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Registrar cliente</p>
-        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 2fr auto", gap: 10, alignItems: "end" }}>
+        <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 2fr auto", gap: 10, alignItems: "end" }}>
           <Inp label="Nombre(s)" value={f.nombre} onChange={s("nombre")} placeholder="Ej. JUAN"/>
           <Inp label="Apellido paterno" value={f.apellido_pat} onChange={s("apellido_pat")} placeholder="GONZALEZ"/>
           <Inp label="Apellido materno" value={f.apellido_mat} onChange={s("apellido_mat")} placeholder="MENDOZA"/>
@@ -571,7 +571,7 @@ function ModAhorro() {
       {clientesSinAhorro.length > 0 && (
         <Card style={{ marginBottom: 16 }}>
           <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Dar de alta ahorro</p>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 10, alignItems: "end" }}>
+          <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 10, alignItems: "end" }}>
             <Sel label="Cliente" value={f.cliente_id} onChange={e => setF(x => ({ ...x, cliente_id: e.target.value }))}>
               <option value="">Selecciona un cliente</option>
               {clientesSinAhorro.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat} {c.apellido_mat || ""}</option>)}
@@ -596,7 +596,7 @@ function ModAhorro() {
               : <Btn key={`e${a.id}`} small onClick={() => { setEditId(a.id); setEditValor(a.cantidad); }}>Editar</Btn>
           ])}
         />
-        <div style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+        <div className="grid-resp" style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.oxford }}>TOTALES GRUPO</div>
           <div style={{ fontSize: 12 }}>Ahorrado: <span style={{ fontWeight: 700, color: C.navy }}>{fmt(total)}</span></div>
           <div style={{ fontSize: 12 }}>Integrantes: <span style={{ fontWeight: 700, color: C.green }}>{ahorros.length}</span></div>
@@ -661,7 +661,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
         </Kpis>
         <div style={{ background: C.lightGray, borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
           <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Registrar aportación quincenal</p>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr auto", gap: 8, alignItems: "end" }}>
+          <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr auto", gap: 8, alignItems: "end" }}>
             <Inp label="Fecha" type="date" value={fecha} onChange={e => setFecha(e.target.value)}/>
             <Inp label="Monto ($)" type="number" value={monto} onChange={e => setMonto(e.target.value)}/>
             <Inp label="Nota (opcional)" value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej. pago adelantado"/>
@@ -791,7 +791,7 @@ function ModCaja() {
       {/* Formulario HORIZONTAL */}
       <Card style={{ marginBottom: 16 }}>
         <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Agregar participante</p>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
+        <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
           <Sel label="Cliente" value={f.cliente_id} onChange={s("cliente_id")}>
             <option value="">Selecciona un cliente</option>
             {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat} {c.apellido_mat || ""}</option>)}
@@ -842,7 +842,7 @@ function ModCaja() {
             ];
           })}
         />
-        <div style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+        <div className="grid-resp" style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.oxford }}>TOTALES GRUPO</div>
           <div style={{ fontSize: 12 }}>Capital: <span style={{ fontWeight: 700, color: C.navy }}>{fmt(totalCapital)}</span></div>
           <div style={{ fontSize: 12 }}>Con interés: <span style={{ fontWeight: 700, color: C.green }}>{fmt(totalCapital + interesProyectado)}</span></div>
@@ -924,7 +924,7 @@ function ModPagosPlazos() {
       {/* Formulario HORIZONTAL */}
       <Card style={{ marginBottom: 16 }}>
         <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Agregar artículo</p>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
+        <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
           <Inp label="Material / Artículo" value={f.material} onChange={s("material")} placeholder="Ej. Refrigerador"/>
           <Inp label="Costo total ($)" type="number" value={f.costo} onChange={handleCostoChange}/>
           <Inp label="Meses totales" type="number" value={f.meses_total} onChange={handleMesesChange}/>
@@ -941,7 +941,7 @@ function ModPagosPlazos() {
           </div>
         )}
       </Card>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
         <Card>
           <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Artículos ({plazos.length})</p>
           <Tabla
@@ -986,7 +986,7 @@ function ModPagosPlazos() {
               ];
             })}
           />
-          <div style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+          <div className="grid-resp" style={{ borderTop: `2px solid ${C.border}`, marginTop: 8, paddingTop: 10, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.oxford }}>TOTALES GRUPO</div>
             <div style={{ fontSize: 12 }}>Costo total: <span style={{ fontWeight: 700, color: C.navy }}>{fmt(totalCosto)}</span></div>
             <div style={{ fontSize: 12 }}>Abonado: <span style={{ fontWeight: 700, color: C.green }}>{fmt(totalAbonado)}</span> · Restante: <span style={{ fontWeight: 700, color: C.orange }}>{fmt(totalRestante)}</span></div>
@@ -1192,7 +1192,7 @@ function ModResumen({ irA }) {
       </Kpis>
 
       {/* Gráficas */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
 
         {/* Distribución del capital — Pie con etiquetas internas */}
         <Card>
@@ -1285,7 +1285,7 @@ function ModResumen({ irA }) {
       )}
 
       {/* Ranking de deudores + indicadores */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <Card>
           <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Ranking de deudores</p>
           <p style={{ margin: "0 0 12px", fontSize: 10, color: C.oxford }}>Haz clic en un nombre para ver su informe individual</p>
@@ -1388,7 +1388,7 @@ function ModUsuarios() {
       {/* Formulario HORIZONTAL en una Card completa */}
       <Card style={{ marginBottom: 16 }}>
         <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Nuevo usuario</p>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1.2fr 1fr auto", gap: 10, alignItems: "end" }}>
+        <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 1.2fr 1fr auto", gap: 10, alignItems: "end" }}>
           <Inp label="Nombre completo" value={f.nombre} onChange={s("nombre")} placeholder="Ej. Juan Pérez"/>
           <Inp label="Usuario (login)" value={f.username} onChange={s("username")} placeholder="jperez"/>
           <Inp label="Contraseña" type="password" value={f.password} onChange={s("password")} placeholder="••••••••"/>
@@ -1683,7 +1683,7 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
       <SectionTitle>Configuración del sistema</SectionTitle>
 
       {/* Accesos a Clientes y Usuarios — se abren en popup, ya no son pestañas del menú */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <Card onClick={() => setVerClientes(true)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 24 }}>👥</span>
           <div>
@@ -1703,7 +1703,7 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
       </div>
 
       {rol === "administrador" && (
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
 
         {/* Alertas — días de anticipación */}
         <Card style={tarjetaChica}>
@@ -1711,7 +1711,7 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
           <p style={textoChico}>
             Define con cuántos días de anticipación aparecen las alertas de cobro de interés mensual en el sistema y en los correos.
           </p>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "end" }}>
+          <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "end" }}>
             <Inp
               label="Días de anticipación para alertas"
               type="number"
@@ -1861,7 +1861,7 @@ function AlertasBell() {
         )}
       </button>
       {open && (
-        <div style={{ position: "absolute", top: 36, right: 0, background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,.2)", width: 300, zIndex: 1000, padding: 12 }}>
+        <div style={{ position: "absolute", top: 36, right: 0, background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,.2)", width: 300, maxWidth: "calc(100vw - 24px)", zIndex: 1000, padding: 12 }}>
           <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.navy }}>Réditos próximos a vencer</p>
           {alertas.length === 0
             ? <p style={{ fontSize: 12, color: C.oxford }}>Sin alertas pendientes.</p>
@@ -2001,8 +2001,8 @@ function Login({ onLogin }) {
   }
 
   return (
-    <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <Card style={{ width: 320 }}>
+    <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 16px", boxSizing: "border-box" }}>
+      <Card style={{ width: 320, maxWidth: "100%" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20 }}>
           <LogoLogin/>
           <div style={{ fontSize: 11, color: C.oxford, letterSpacing: 1, textTransform: "uppercase", marginTop: 10, textAlign: "center" }}>Sistema de administración de pagos</div>
@@ -2056,7 +2056,7 @@ function BuscadorGlobal({ onVerDeudor }) {
   const hayResultados = resultados && (resultados.clientes.length > 0 || resultados.prestamos.length > 0);
 
   return (
-    <div style={{ position: "relative", width: 230, marginRight: 14 }}>
+    <div style={{ position: "relative", flex: "1 1 160px", minWidth: 120, maxWidth: 230, marginRight: 14 }}>
       <input
         value={q}
         onChange={e => { setQ(e.target.value); setAbierto(true); }}
@@ -2066,7 +2066,7 @@ function BuscadorGlobal({ onVerDeudor }) {
         style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "none", fontSize: 12, boxSizing: "border-box" }}
       />
       {abierto && q.trim().length >= 2 && (
-        <div style={{ position: "absolute", top: 34, left: 0, width: 300, background: C.cardBg, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,.3)", zIndex: 100, maxHeight: 320, overflowY: "auto" }}>
+        <div style={{ position: "absolute", top: 34, left: 0, width: "max(230px, 100%)", maxWidth: "calc(100vw - 24px)", background: C.cardBg, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,.3)", zIndex: 100, maxHeight: 320, overflowY: "auto" }}>
           {!hayResultados && <p style={{ margin: 0, padding: 12, fontSize: 12, color: C.oxford }}>Sin resultados</p>}
           {resultados?.clientes.length > 0 && (
             <div>
@@ -2166,25 +2166,27 @@ export default function App() {
     <ConfirmProvider>
     <Toaster position="top-right" toastOptions={{ style: { fontSize: 13, maxWidth: 380 }, success: { iconTheme: { primary: C.green, secondary: C.white } }, error: { iconTheme: { primary: C.red, secondary: C.white } } }}/>
     <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh" }}>
-      <div style={{ background: C.headerBg, padding: "0 20px", display: "flex", alignItems: "center", gap: 14, height: 56, boxShadow: "0 2px 6px rgba(0,0,0,.3)" }}>
+      <div className="app-header" style={{ background: C.headerBg, padding: "0 20px", display: "flex", alignItems: "center", gap: 14, height: 56, boxShadow: "0 2px 6px rgba(0,0,0,.3)" }}>
         <Logo size={40}/>
-        <div>
+        <div className="ocultar-movil">
           <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: 2, color: C.gold, lineHeight: 1.1 }}>JGM</div>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#a0b8d8", letterSpacing: 0.5, lineHeight: 1.1 }}>Gonzas <span style={{ color: C.orange }}>systems</span></div>
         </div>
-        <div style={{ flex: 1 }}/>
-        <BuscadorGlobal onVerDeudor={setDeudorGlobal}/>
+        <div className="sp" style={{ flex: 1 }}/>
+        <div className="buscador-global">
+          <BuscadorGlobal onVerDeudor={setDeudorGlobal}/>
+        </div>
         <div style={{ textAlign: "right", marginRight: 14 }}>
           <div style={{ fontSize: 12, color: C.white, fontWeight: 700 }}>{user.nombre}</div>
           <div style={{ fontSize: 10, color: C.gold, textTransform: "uppercase" }}>{user.rol}</div>
         </div>
         <AlertasBell/>
         <button onClick={toggleTema} title={tema === "claro" ? "Cambiar a modo oscuro" : "Cambiar a modo claro"}
-          style={{ background: "transparent", border: `1px solid ${C.gold}`, borderRadius: 8, width: 32, height: 32, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          style={{ background: "transparent", border: `1px solid ${C.gold}`, borderRadius: 8, width: 32, height: 32, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           {tema === "claro" ? "🌙" : "☀️"}
         </button>
         <Btn small color={C.orange} onClick={handleLogout}>Salir</Btn>
-        <div style={{ fontSize: 11, color: "#8fa8c8", marginLeft: 14 }}>
+        <div className="ocultar-movil" style={{ fontSize: 11, color: "#8fa8c8", marginLeft: 14 }}>
           {new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </div>
       </div>
