@@ -11,7 +11,7 @@
 // IMPORTANTE: sube CACHE_NAME (v1 -> v2 -> v3...) cada vez que cambies esta estrategia, para que
 // los navegadores con la versión vieja del service worker instalada limpien su caché al activarse.
 
-const CACHE_NAME = "gonza-cache-v4";
+const CACHE_NAME = "gonza-cache-v5";
 
 const STATIC_ASSETS = [
   "/",

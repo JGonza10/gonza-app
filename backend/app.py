@@ -17,6 +17,7 @@ import psycopg2
 import psycopg2.extras
 import itsdangerous
 from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from functools import wraps
 from flask import Flask, jsonify, request, Response, g
@@ -32,6 +33,28 @@ import base64
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
+
+# ─── ZONA HORARIA DEL NEGOCIO ─────────────────────────────────────────────────
+# Todas las reglas de negocio con fecha (cortes de interés, "días para corte",
+# vencidos, fecha por defecto de movimientos, timestamps de auditoría) deben
+# calcularse en la hora de México, sin importar en qué zona horaria corra el
+# servidor (Railway corre en UTC). get_db() fija esto mismo a nivel de sesión
+# de PostgreSQL (ver "SET TIME ZONE" ahí) para que CURRENT_DATE/NOW() en SQL
+# coincidan con lo que devuelven estas funciones.
+ZONA_NEGOCIO_PG = "America/Mexico_City"
+ZONA_NEGOCIO = ZoneInfo(ZONA_NEGOCIO_PG)
+
+
+def ahora_mx():
+    """Fecha y hora actuales en la zona horaria del negocio (Ciudad de México)."""
+    return datetime.now(ZONA_NEGOCIO)
+
+
+def hoy_mx():
+    """Fecha de 'hoy' en la zona horaria del negocio (Ciudad de México).
+       Usar SIEMPRE esta función (nunca date.today()/datetime.now() a secas)
+       para cualquier cálculo de fecha que sea una regla de negocio."""
+    return ahora_mx().date()
 
 # ─── LÍMITE DE PETICIONES ─────────────────────────────────────────────────────
 # Protección básica contra abuso/fuerza bruta a nivel de API completa. El login
@@ -131,11 +154,25 @@ def _money(valor, default="0"):
 # En local, la defines en .env o en tu terminal
 
 def get_db():
-    """Devuelve una conexión a PostgreSQL."""
-    return psycopg2.connect(
+    """Devuelve una conexión a PostgreSQL.
+
+    Fija la zona horaria de la SESIÓN a la del negocio (Ciudad de México),
+    sin importar en qué zona corra el servidor (Railway corre en UTC). Así
+    CURRENT_DATE, NOW() y CURRENT_TIMESTAMP —usados en cortes de interés,
+    "días para corte", vencidos, y en los timestamps de auditoría/soft
+    delete— reflejan el día calendario real de México, no el de UTC. Esto es
+    lo correcto para reglas de negocio con dinero de por medio: usar el
+    reloj de la computadora de quien esté usando el sistema en ese momento
+    permitiría a cualquiera adelantar/atrasar su equipo para manipular
+    cuándo se cobra un interés o cuándo algo se marca como vencido.
+    """
+    conn = psycopg2.connect(
         os.environ.get("DATABASE_URL"),
         cursor_factory=psycopg2.extras.RealDictCursor  # devuelve dicts, no tuplas
     )
+    with conn.cursor() as cur:
+        cur.execute("SET TIME ZONE %s;", (ZONA_NEGOCIO_PG,))
+    return conn
 
 # ─── RUTAS: AUTENTICACIÓN ─────────────────────────────────────────────────────
 
@@ -834,7 +871,7 @@ def _generar_cortes_faltantes(cur, pid, interes_mensual, fecha_prestamo):
     """
     from dateutil.relativedelta import relativedelta
 
-    hoy = date.today()
+    hoy = hoy_mx()
     primer_corte = (fecha_prestamo + relativedelta(months=1)).replace(day=1)
     corte_actual = primer_corte
 
@@ -1106,7 +1143,7 @@ def add_ahorro():
         """, (
             data["cliente_id"],
             _money(data.get("cantidad", 0)),
-            data.get("fecha") or date.today().isoformat(),
+            data.get("fecha") or hoy_mx().isoformat(),
             data.get("nota", ""),
         ))
         nuevo_id = cur.fetchone()["id"]
@@ -1236,7 +1273,7 @@ def add_caja():
         cur.execute("""
             INSERT INTO caja_movimientos (caja_id, fecha, monto, nota)
             VALUES (%s, %s, %s, %s);
-        """, (nuevo_id, data.get("fecha_inicio") or date.today().isoformat(), capital_inicial, "Capital inicial"))
+        """, (nuevo_id, data.get("fecha_inicio") or hoy_mx().isoformat(), capital_inicial, "Capital inicial"))
 
     _registrar_auditoria(cur, "caja", nuevo_id, "crear", detalle=data)
     conn.commit()
@@ -1547,7 +1584,17 @@ def _generar_inserts(cur, tabla, columnas):
     cols_sql = ", ".join(f'"{c}"' for c in columnas)
     partes = [f'\n-- Datos: {tabla} ({len(filas)} filas)\n']
     for fila in filas:
-        valores = tuple(fila[c] for c in columnas)
+        # Las columnas JSON/JSONB (ej. auditoria.detalle) llegan de psycopg2
+        # ya decodificadas como dict/list de Python, y esos tipos no son
+        # adaptables a SQL "en crudo" (igual que al insertarlas la primera
+        # vez: _registrar_auditoria las envuelve con psycopg2.extras.Json).
+        # Sin este envoltorio, mogrify truena con "can't adapt type 'dict'"
+        # en cuanto la tabla auditoria tiene un solo registro, y el backup
+        # completo fallaba con error 500.
+        valores = tuple(
+            psycopg2.extras.Json(fila[c]) if isinstance(fila[c], (dict, list)) else fila[c]
+            for c in columnas
+        )
         insert = cur.mogrify(
             f'INSERT INTO "{tabla}" ({cols_sql}) VALUES %s;', (valores,)
         )
@@ -1606,7 +1653,7 @@ def exportar_backup_completo():
     cur = conn.cursor()
     try:
         partes = ["-- Backup completo Sistema GONZA (estructura + datos)\n"
-                   f"-- Generado: {datetime.now().isoformat()}\n\n"
+                   f"-- Generado: {ahora_mx().isoformat()}\n\n"
                    "BEGIN;\n"]
 
         tablas = _tablas_publicas(cur)
@@ -1635,7 +1682,7 @@ def exportar_backup_completo():
         conn.close()
 
     contenido = "".join(partes)
-    fecha = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    fecha = ahora_mx().strftime("%Y-%m-%d_%H-%M-%S")
     nombre_archivo = f"backup_gonza_{fecha}.sql"
 
     return Response(
@@ -2638,7 +2685,7 @@ def enviar_correo_completo():
     <div style="font-family:sans-serif;max-width:680px;margin:0 auto">
       <div style="background:#0B1F4B;padding:18px 24px;border-radius:8px 8px 0 0">
         <h2 style="color:#C9A84C;margin:0">Sistema GONZA</h2>
-        <p style="color:#8fa8c8;margin:4px 0 0;font-size:12px">Informe diario automático — {date.today().strftime('%d/%m/%Y')}</p>
+        <p style="color:#8fa8c8;margin:4px 0 0;font-size:12px">Informe diario automático — {hoy_mx().strftime('%d/%m/%Y')}</p>
       </div>
       <div style="background:#fff;padding:24px;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px">
         {seccion_alertas}
@@ -2660,7 +2707,7 @@ def enviar_correo_completo():
         try:
             enviar_correo(
                 d["correo"],
-                f"GONZA — Informe diario {date.today().strftime('%d/%m/%Y')}",
+                f"GONZA — Informe diario {hoy_mx().strftime('%d/%m/%Y')}",
                 cuerpo,
                 adjuntos=adjuntos
             )
@@ -2807,7 +2854,7 @@ def _generar_pdf_informe(datos):
 
     el += [
         Paragraph(f"<b>Deudor:</b> {datos['deudor']}", styles["Normal"]),
-        Paragraph(f"<b>Fecha del informe:</b> {date.today().strftime('%d/%m/%Y')}", styles["Normal"]),
+        Paragraph(f"<b>Fecha del informe:</b> {hoy_mx().strftime('%d/%m/%Y')}", styles["Normal"]),
         Spacer(1, 10),
     ]
 
@@ -2904,7 +2951,7 @@ def get_informe_deudor_pdf(cliente_id):
     """Descarga el informe ejecutivo del deudor como PDF con el membrete de la empresa."""
     datos = _datos_informe_deudor(cliente_id)
     pdf_bytes = _generar_pdf_informe(datos)
-    archivo = f"informe_{datos['deudor'].strip().replace(' ', '_')}_{date.today().isoformat()}.pdf"
+    archivo = f"informe_{datos['deudor'].strip().replace(' ', '_')}_{hoy_mx().isoformat()}.pdf"
     return Response(
         pdf_bytes,
         mimetype="application/pdf",

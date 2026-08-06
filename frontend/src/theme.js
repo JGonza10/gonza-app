@@ -65,7 +65,7 @@ export function aplicarTema(tema) {
   localStorage.setItem("gonza_tema", tema);
   // La barra de estado del móvil (PWA) también cambia
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", tema === "claro" ? "#F2F5FA" : "#0A1120");
+  if (meta) meta.setAttribute("content", tema === "claro" ? "#F2F3F0" : "#05080E");
 }
 
 export const temaGuardado = () => localStorage.getItem("gonza_tema") || "oscuro";
