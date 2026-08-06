@@ -1730,7 +1730,12 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
       </div>
 
       {rol === "administrador" && (
-      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+      <>
+      {/* Grid 2×2: ajustes rápidos arriba, gestión de datos abajo. "Envío de
+          correos" queda fuera de este grid (ver más abajo): es, por mucho, la
+          tarjeta con más contenido, y meterla en la misma fila que cualquier
+          otra siempre estiraba esa fila entera para igualar su alto. */}
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
 
         {/* Alertas — días de anticipación */}
         <Card style={tarjetaChica}>
@@ -1753,90 +1758,7 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
           {msg && <div style={{ background: C.greenLight, color: C.green, fontSize: 12, padding: "7px 10px", borderRadius: 2, marginTop: 4 }}>{msg}</div>}
         </Card>
 
-        {/* Correo combinado */}
-        <Card style={tarjetaChica}>
-          <p style={tituloChico}>📧 Envío de correos</p>
-          <p style={textoChico}>
-            Los correos de alerta se envían automáticamente cada día a las <b>8:00 AM</b> (cron job). También puedes enviarlos manualmente ahora.
-          </p>
-
-          {/* Selector de formato del respaldo */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.oxford, marginBottom: 6 }}>
-              Formato del respaldo adjunto:
-            </label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {["xlsx", "csv", "sql"].map(f => (
-                <button key={f} onClick={() => setFormatoBackup(f)} style={{
-                  padding: "5px 14px", borderRadius: 2, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                  border: `2px solid ${formatoBackup === f ? C.orange : C.border}`,
-                  background: formatoBackup === f ? C.orangeLight : C.lightGray,
-                  color: formatoBackup === f ? C.orange : C.oxford,
-                }}>
-                  {f.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Botón principal */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn color={C.navy} onClick={handleEnviarCorreoCombinado} loading={savingCorreo}>
-              📨 Enviar correo completo ahora
-            </Btn>
-            <Btn color={C.green} onClick={handleEnviarWhatsapp} loading={enviandoWhatsapp}>
-              💬 Recordatorio por WhatsApp
-            </Btn>
-          </div>
-
-          {/* Detalle de lo que incluye */}
-          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
-            {[
-              { icon: "🔔", texto: "Alertas de réditos próximos a vencer" },
-              { icon: "📊", texto: "Informe ejecutivo (cartera, caja, top deudores)" },
-              { icon: "💾", texto: `Respaldo de base de datos en ${formatoBackup.toUpperCase()}` },
-            ].map((item, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: C.lightGray, borderRadius: 2, padding: "6px 10px", fontSize: 12, color: C.oxford }}>
-                <span style={{ fontSize: 15 }}>{item.icon}</span>
-                {item.texto}
-              </div>
-            ))}
-          </div>
-
-          <div style={{ background: C.goldLight, borderRadius: 2, padding: "8px 12px", marginTop: 12, fontSize: 11, color: "#8B6914" }}>
-            <b>Destinatarios:</b> todos los usuarios con rol <b>administrador</b> o <b>analista</b> que tengan correo registrado en la base de datos.
-          </div>
-        </Card>
-
-        {/* Historial de accesos — solo visible para administrador (el backend ya lo
-            protege también). Oculto por defecto: se despliega solo si se solicita,
-            y muestra nada más los últimos 20 intentos. */}
-        {!errorHistorial && historial.length > 0 && (
-          <Card style={tarjetaChica}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <p style={{ ...tituloChico, margin: 0 }}>🕵️ Historial de accesos</p>
-              <Btn small onClick={() => setVerHistorial(v => !v)}>{verHistorial ? "Ocultar" : "Ver historial"}</Btn>
-            </div>
-            {verHistorial && (
-              <>
-                <p style={{ ...textoChico, marginTop: 8 }}>
-                  Últimos {historialReciente.length} intentos de inicio de sesión (exitosos y fallidos), con IP de origen. Se actualiza solo cada semana.
-                </p>
-                <Tabla
-                  headers={["Usuario", "Resultado", "IP", "Fecha"]}
-                  rows={historialReciente.map((h, i) => [
-                    h.username,
-                    <Badge key={i} color={h.exito ? C.green : C.red} bg={h.exito ? C.greenLight : C.redLight}>
-                      {h.exito ? "Exitoso" : "Fallido"}
-                    </Badge>,
-                    h.ip,
-                    h.fecha,
-                  ])}
-                />
-              </>
-            )}
-          </Card>
-        )}
+        <Config2FA/>
 
         {/* Backup y restauración completa de la base de datos */}
         <Card style={tarjetaChica}>
@@ -1873,8 +1795,92 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
           </div>
         </Card>
 
-        <Config2FA/>
+        {/* Historial de accesos — solo visible para administrador (el backend ya lo
+            protege también). Oculto por defecto: se despliega solo si se solicita,
+            y muestra nada más los últimos 20 intentos. */}
+        {!errorHistorial && historial.length > 0 && (
+          <Card style={tarjetaChica}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <p style={{ ...tituloChico, margin: 0 }}>🕵️ Historial de accesos</p>
+              <Btn small onClick={() => setVerHistorial(v => !v)}>{verHistorial ? "Ocultar" : "Ver historial"}</Btn>
+            </div>
+            {verHistorial && (
+              <>
+                <p style={{ ...textoChico, marginTop: 8 }}>
+                  Últimos {historialReciente.length} intentos de inicio de sesión (exitosos y fallidos), con IP de origen. Se actualiza solo cada semana.
+                </p>
+                <Tabla
+                  headers={["Usuario", "Resultado", "IP", "Fecha"]}
+                  rows={historialReciente.map((h, i) => [
+                    h.username,
+                    <Badge key={i} color={h.exito ? C.green : C.red} bg={h.exito ? C.greenLight : C.redLight}>
+                      {h.exito ? "Exitoso" : "Fallido"}
+                    </Badge>,
+                    h.ip,
+                    h.fecha,
+                  ])}
+                />
+              </>
+            )}
+          </Card>
+        )}
       </div>
+
+      {/* Correo combinado — a todo lo ancho, hasta abajo (ver comentario arriba) */}
+      <Card style={tarjetaChica}>
+        <p style={tituloChico}>📧 Envío de correos</p>
+        <p style={textoChico}>
+          Los correos de alerta se envían automáticamente cada día a las <b>8:00 AM</b> (cron job). También puedes enviarlos manualmente ahora.
+        </p>
+
+        {/* Selector de formato del respaldo */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.oxford, marginBottom: 6 }}>
+            Formato del respaldo adjunto:
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {["xlsx", "csv", "sql"].map(f => (
+              <button key={f} onClick={() => setFormatoBackup(f)} style={{
+                padding: "5px 14px", borderRadius: 2, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                border: `2px solid ${formatoBackup === f ? C.orange : C.border}`,
+                background: formatoBackup === f ? C.orangeLight : C.lightGray,
+                color: formatoBackup === f ? C.orange : C.oxford,
+              }}>
+                {f.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Botón principal */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn color={C.navy} onClick={handleEnviarCorreoCombinado} loading={savingCorreo}>
+            📨 Enviar correo completo ahora
+          </Btn>
+          <Btn color={C.green} onClick={handleEnviarWhatsapp} loading={enviandoWhatsapp}>
+            💬 Recordatorio por WhatsApp
+          </Btn>
+        </div>
+
+        {/* Detalle de lo que incluye */}
+        <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {[
+            { icon: "🔔", texto: "Alertas de réditos próximos a vencer" },
+            { icon: "📊", texto: "Informe ejecutivo (cartera, caja, top deudores)" },
+            { icon: "💾", texto: `Respaldo de base de datos en ${formatoBackup.toUpperCase()}` },
+          ].map((item, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: C.lightGray, borderRadius: 2, padding: "6px 10px", fontSize: 12, color: C.oxford }}>
+              <span style={{ fontSize: 15 }}>{item.icon}</span>
+              {item.texto}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ background: C.goldLight, borderRadius: 2, padding: "8px 12px", marginTop: 12, fontSize: 11, color: "#8B6914" }}>
+          <b>Destinatarios:</b> todos los usuarios con rol <b>administrador</b> o <b>analista</b> que tengan correo registrado en la base de datos.
+        </div>
+      </Card>
+      </>
       )}
     </div>
   );
