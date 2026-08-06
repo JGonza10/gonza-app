@@ -65,7 +65,7 @@ export function aplicarTema(tema) {
   localStorage.setItem("gonza_tema", tema);
   // La barra de estado del móvil (PWA) también cambia
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", tema === "claro" ? "#F2F5FA" : "#0A1120");
+  if (meta) meta.setAttribute("content", tema === "claro" ? "#F2F3F0" : "#05080E");
 }
 
 export const temaGuardado = () => localStorage.getItem("gonza_tema") || "oscuro";
@@ -83,10 +83,6 @@ export function hex(varCss) {
   const valor = getComputedStyle(document.documentElement).getPropertyValue(nombre);
   return valor.trim() || "#888";
 }
-
-// Paleta fija para series de gráficas (recharts). Hexadecimales literales
-// porque van directo a atributos SVG y deben verse bien en ambos temas.
-export const SERIES = ["#2E9BF0", "#FFD84D", "#2ED573", "#A78BFA", "#FF8A3D", "#38D6F0", "#FF4B4B"];
 
 // ── HELPERS DE FORMATO (sin cambios) ─────────────────────────────────────────
 export const fmt = n => n == null ? "—" :

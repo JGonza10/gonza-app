@@ -17,6 +17,7 @@ import psycopg2
 import psycopg2.extras
 import itsdangerous
 from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from functools import wraps
 from flask import Flask, jsonify, request, Response, g
@@ -32,6 +33,28 @@ import base64
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
+
+# ─── ZONA HORARIA DEL NEGOCIO ─────────────────────────────────────────────────
+# Todas las reglas de negocio con fecha (cortes de interés, "días para corte",
+# vencidos, fecha por defecto de movimientos, timestamps de auditoría) deben
+# calcularse en la hora de México, sin importar en qué zona horaria corra el
+# servidor (Railway corre en UTC). get_db() fija esto mismo a nivel de sesión
+# de PostgreSQL (ver "SET TIME ZONE" ahí) para que CURRENT_DATE/NOW() en SQL
+# coincidan con lo que devuelven estas funciones.
+ZONA_NEGOCIO_PG = "America/Mexico_City"
+ZONA_NEGOCIO = ZoneInfo(ZONA_NEGOCIO_PG)
+
+
+def ahora_mx():
+    """Fecha y hora actuales en la zona horaria del negocio (Ciudad de México)."""
+    return datetime.now(ZONA_NEGOCIO)
+
+
+def hoy_mx():
+    """Fecha de 'hoy' en la zona horaria del negocio (Ciudad de México).
+       Usar SIEMPRE esta función (nunca date.today()/datetime.now() a secas)
+       para cualquier cálculo de fecha que sea una regla de negocio."""
+    return ahora_mx().date()
 
 # ─── LÍMITE DE PETICIONES ─────────────────────────────────────────────────────
 # Protección básica contra abuso/fuerza bruta a nivel de API completa. El login
@@ -59,20 +82,21 @@ def health():
 # token firmado criptográficamente. Nadie puede fabricar uno válido sin conocer
 # SECRET_KEY, que solo vive en el servidor.
 #
-# IMPORTANTE: define SECRET_KEY como variable de entorno en Railway con un
-# valor largo y aleatorio (ej. generado con: python -c "import secrets; print(secrets.token_hex(32))")
-# Si no la defines, el servidor genera una temporal al arrancar — funciona,
-# pero cada vez que Railway reinicie el contenedor, todas las sesiones activas
-# se invalidan y los usuarios tendrán que volver a iniciar sesión.
+# OBLIGATORIA: define SECRET_KEY como variable de entorno en Railway (o en tu
+# .env local) con un valor largo y aleatorio, ej. generado con:
+#   python -c "import secrets; print(secrets.token_hex(32))"
+# Sin ella la app se niega a arrancar — nunca se usa una clave insegura por
+# defecto ni se genera una aleatoria en cada arranque, porque eso invalidaría
+# todas las sesiones activas cada vez que el proceso se reinicia.
 
 SECRET_KEY = os.environ.get("SECRET_KEY")
 if not SECRET_KEY:
-    app.logger.warning(
-        "SECRET_KEY no está configurada. Usando una clave temporal: "
-        "las sesiones se invalidarán en cada reinicio del servidor. "
-        "Define SECRET_KEY en las variables de entorno de Railway."
+    raise RuntimeError(
+        "SECRET_KEY no está configurada. Defínela como variable de entorno "
+        "antes de arrancar la aplicación (en Railway: pestaña Variables del "
+        "servicio backend; en local: archivo .env). Genera un valor con: "
+        'python -c "import secrets; print(secrets.token_hex(32))"'
     )
-    SECRET_KEY = secrets.token_hex(32)
 
 _serializer = itsdangerous.URLSafeTimedSerializer(SECRET_KEY)
 TOKEN_SESION_MAX_AGE = 8 * 60 * 60   # 8 horas
@@ -130,11 +154,25 @@ def _money(valor, default="0"):
 # En local, la defines en .env o en tu terminal
 
 def get_db():
-    """Devuelve una conexión a PostgreSQL."""
-    return psycopg2.connect(
+    """Devuelve una conexión a PostgreSQL.
+
+    Fija la zona horaria de la SESIÓN a la del negocio (Ciudad de México),
+    sin importar en qué zona corra el servidor (Railway corre en UTC). Así
+    CURRENT_DATE, NOW() y CURRENT_TIMESTAMP —usados en cortes de interés,
+    "días para corte", vencidos, y en los timestamps de auditoría/soft
+    delete— reflejan el día calendario real de México, no el de UTC. Esto es
+    lo correcto para reglas de negocio con dinero de por medio: usar el
+    reloj de la computadora de quien esté usando el sistema en ese momento
+    permitiría a cualquiera adelantar/atrasar su equipo para manipular
+    cuándo se cobra un interés o cuándo algo se marca como vencido.
+    """
+    conn = psycopg2.connect(
         os.environ.get("DATABASE_URL"),
         cursor_factory=psycopg2.extras.RealDictCursor  # devuelve dicts, no tuplas
     )
+    with conn.cursor() as cur:
+        cur.execute("SET TIME ZONE %s;", (ZONA_NEGOCIO_PG,))
+    return conn
 
 # ─── RUTAS: AUTENTICACIÓN ─────────────────────────────────────────────────────
 
@@ -833,7 +871,7 @@ def _generar_cortes_faltantes(cur, pid, interes_mensual, fecha_prestamo):
     """
     from dateutil.relativedelta import relativedelta
 
-    hoy = date.today()
+    hoy = hoy_mx()
     primer_corte = (fecha_prestamo + relativedelta(months=1)).replace(day=1)
     corte_actual = primer_corte
 
@@ -1105,7 +1143,7 @@ def add_ahorro():
         """, (
             data["cliente_id"],
             _money(data.get("cantidad", 0)),
-            data.get("fecha") or date.today().isoformat(),
+            data.get("fecha") or hoy_mx().isoformat(),
             data.get("nota", ""),
         ))
         nuevo_id = cur.fetchone()["id"]
@@ -1235,7 +1273,7 @@ def add_caja():
         cur.execute("""
             INSERT INTO caja_movimientos (caja_id, fecha, monto, nota)
             VALUES (%s, %s, %s, %s);
-        """, (nuevo_id, data.get("fecha_inicio") or date.today().isoformat(), capital_inicial, "Capital inicial"))
+        """, (nuevo_id, data.get("fecha_inicio") or hoy_mx().isoformat(), capital_inicial, "Capital inicial"))
 
     _registrar_auditoria(cur, "caja", nuevo_id, "crear", detalle=data)
     conn.commit()
@@ -1546,7 +1584,17 @@ def _generar_inserts(cur, tabla, columnas):
     cols_sql = ", ".join(f'"{c}"' for c in columnas)
     partes = [f'\n-- Datos: {tabla} ({len(filas)} filas)\n']
     for fila in filas:
-        valores = tuple(fila[c] for c in columnas)
+        # Las columnas JSON/JSONB (ej. auditoria.detalle) llegan de psycopg2
+        # ya decodificadas como dict/list de Python, y esos tipos no son
+        # adaptables a SQL "en crudo" (igual que al insertarlas la primera
+        # vez: _registrar_auditoria las envuelve con psycopg2.extras.Json).
+        # Sin este envoltorio, mogrify truena con "can't adapt type 'dict'"
+        # en cuanto la tabla auditoria tiene un solo registro, y el backup
+        # completo fallaba con error 500.
+        valores = tuple(
+            psycopg2.extras.Json(fila[c]) if isinstance(fila[c], (dict, list)) else fila[c]
+            for c in columnas
+        )
         insert = cur.mogrify(
             f'INSERT INTO "{tabla}" ({cols_sql}) VALUES %s;', (valores,)
         )
@@ -1605,7 +1653,7 @@ def exportar_backup_completo():
     cur = conn.cursor()
     try:
         partes = ["-- Backup completo Sistema GONZA (estructura + datos)\n"
-                   f"-- Generado: {datetime.now().isoformat()}\n\n"
+                   f"-- Generado: {ahora_mx().isoformat()}\n\n"
                    "BEGIN;\n"]
 
         tablas = _tablas_publicas(cur)
@@ -1634,7 +1682,7 @@ def exportar_backup_completo():
         conn.close()
 
     contenido = "".join(partes)
-    fecha = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    fecha = ahora_mx().strftime("%Y-%m-%d_%H-%M-%S")
     nombre_archivo = f"backup_gonza_{fecha}.sql"
 
     return Response(
@@ -1877,12 +1925,15 @@ def enviar_whatsapp(telefono, mensaje):
 def requiere_cron(f):
     """Decorador: permite la petición solo si el header X-Cron-Secret coincide
        con la variable de entorno CRON_SECRET.
-       También acepta llamadas de un administrador autenticado (pruebas manuales)."""
+       También acepta llamadas de un administrador autenticado (pruebas manuales).
+       Si CRON_SECRET no está configurado, la ruta queda BLOQUEADA para peticiones
+       no autenticadas (antes se dejaba pasar sin protección: cualquiera podía
+       disparar envío de correos/WhatsApp/backups sin credenciales)."""
     @wraps(f)
     def envoltura(*args, **kwargs):
         cron_secret = os.environ.get("CRON_SECRET", "")
 
-        # 1. Permitir si el header X-Cron-Secret es correcto
+        # 1. Permitir si el header X-Cron-Secret es correcto (y está configurado)
         header_secret = request.headers.get("X-Cron-Secret", "")
         if cron_secret and header_secret == cron_secret:
             return f(*args, **kwargs)
@@ -1892,13 +1943,12 @@ def requiere_cron(f):
         if not error and username and get_rol(username) == "administrador":
             return f(*args, **kwargs)
 
-        # 3. Si CRON_SECRET no está configurado en el entorno, advertir en lugar de bloquear
         if not cron_secret:
             app.logger.warning(
-                "ADVERTENCIA: CRON_SECRET no configurado. "
-                "Define esta variable de entorno en Railway para proteger las rutas de cron."
+                "CRON_SECRET no configurado: la ruta de cron permanece bloqueada "
+                "para peticiones no autenticadas. Define esta variable de entorno "
+                "en Railway para que el cron job externo pueda llamarla."
             )
-            return f(*args, **kwargs)
 
         return jsonify({"error": "No autorizado. Se requiere X-Cron-Secret válido."}), 401
     return envoltura
@@ -2211,19 +2261,6 @@ def enviar_informe_resumen():
     return jsonify({"enviados": enviados, "errores": errores})
 
 
-# ─── RUTA: RESUMEN ────────────────────────────────────────────────────────────
-
-@app.route("/api/resumen", methods=["GET"])
-@requiere_lectura("consultor")
-def get_resumen():
-    """Devuelve los totales del sistema (para el dashboard)."""
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM v_resumen;")
-    resumen = cur.fetchone()
-    conn.close()
-    return jsonify(dict(resumen))
-
 # ─── RUTAS: MOVIMIENTOS DE CAJA ───────────────────────────────────────────────
 
 @app.route("/api/caja/<int:cid>/movimientos", methods=["GET"])
@@ -2345,30 +2382,6 @@ def delete_movimiento_caja(cid, mid):
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Movimiento eliminado"})
-
-
-@app.route("/api/caja/resumen", methods=["GET"])
-@requiere_lectura("consultor")
-def get_caja_resumen():
-    """
-    Resumen global de la caja: total acumulado real (suma de movimientos),
-    interés proyectado 4% anual, y total a entregar.
-    """
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT
-            COUNT(DISTINCT c.id)                              AS total_participantes,
-            COALESCE(SUM(cm.monto), 0)                        AS total_acumulado,
-            COALESCE(SUM(cm.monto) * 0.04, 0)                 AS total_interes,
-            COALESCE(SUM(cm.monto) * 1.04, 0)                 AS total_a_entregar
-        FROM caja c
-        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id AND cm.eliminado_en IS NULL
-        WHERE c.eliminado_en IS NULL;
-    """)
-    row = cur.fetchone()
-    conn.close()
-    return jsonify(dict(row))
 
 # ─── RUTAS: RESET DE CONTRASEÑA (con código enviado al correo) ──────────────
 # Flujo:
@@ -2672,7 +2685,7 @@ def enviar_correo_completo():
     <div style="font-family:sans-serif;max-width:680px;margin:0 auto">
       <div style="background:#0B1F4B;padding:18px 24px;border-radius:8px 8px 0 0">
         <h2 style="color:#C9A84C;margin:0">Sistema GONZA</h2>
-        <p style="color:#8fa8c8;margin:4px 0 0;font-size:12px">Informe diario automático — {date.today().strftime('%d/%m/%Y')}</p>
+        <p style="color:#8fa8c8;margin:4px 0 0;font-size:12px">Informe diario automático — {hoy_mx().strftime('%d/%m/%Y')}</p>
       </div>
       <div style="background:#fff;padding:24px;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px">
         {seccion_alertas}
@@ -2694,7 +2707,7 @@ def enviar_correo_completo():
         try:
             enviar_correo(
                 d["correo"],
-                f"GONZA — Informe diario {date.today().strftime('%d/%m/%Y')}",
+                f"GONZA — Informe diario {hoy_mx().strftime('%d/%m/%Y')}",
                 cuerpo,
                 adjuntos=adjuntos
             )
@@ -2841,7 +2854,7 @@ def _generar_pdf_informe(datos):
 
     el += [
         Paragraph(f"<b>Deudor:</b> {datos['deudor']}", styles["Normal"]),
-        Paragraph(f"<b>Fecha del informe:</b> {date.today().strftime('%d/%m/%Y')}", styles["Normal"]),
+        Paragraph(f"<b>Fecha del informe:</b> {hoy_mx().strftime('%d/%m/%Y')}", styles["Normal"]),
         Spacer(1, 10),
     ]
 
@@ -2938,7 +2951,7 @@ def get_informe_deudor_pdf(cliente_id):
     """Descarga el informe ejecutivo del deudor como PDF con el membrete de la empresa."""
     datos = _datos_informe_deudor(cliente_id)
     pdf_bytes = _generar_pdf_informe(datos)
-    archivo = f"informe_{datos['deudor'].strip().replace(' ', '_')}_{date.today().isoformat()}.pdf"
+    archivo = f"informe_{datos['deudor'].strip().replace(' ', '_')}_{hoy_mx().isoformat()}.pdf"
     return Response(
         pdf_bytes,
         mimetype="application/pdf",

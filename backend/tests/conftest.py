@@ -4,6 +4,9 @@ se reemplaza por un doble de prueba configurable por cada test."""
 import os
 os.environ.setdefault("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
 os.environ.setdefault("CRON_SECRET", "secreto_de_prueba")
+# SECRET_KEY ahora es obligatoria para que la app arranque (ver app.py); las
+# pruebas necesitan un valor propio antes de importar el módulo.
+os.environ.setdefault("SECRET_KEY", "clave_de_prueba_no_usar_en_produccion")
 
 import pytest
 

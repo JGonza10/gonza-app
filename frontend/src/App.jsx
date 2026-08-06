@@ -158,7 +158,7 @@ function ModalCortesInteres({ prestamo, onClose }) {
       </Kpis>
 
       {corteSeleccionado && (
-          <div style={{ background: C.lightGray, borderRadius: 10, padding: "12px 14px", marginBottom: 14, border: `1px solid ${C.gold}` }}>
+          <div style={{ background: C.lightGray, borderRadius: 2, padding: "12px 14px", marginBottom: 14, border: `1px solid ${C.gold}` }}>
             <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: C.navy }}>
               Registrar pago — {fmtPeriodo(corteSeleccionado.periodo)}
               <span style={{ marginLeft: 8, color: C.oxford, fontWeight: 400 }}>Esperado: {fmt(corteSeleccionado.monto_interes)}</span>
@@ -171,7 +171,7 @@ function ModalCortesInteres({ prestamo, onClose }) {
               <div style={{ marginBottom: 9 }}>
                 <label style={{ display: "block", fontSize: 12, color: C.oxford, marginBottom: 3, fontWeight: 600 }}>Tipo de pago</label>
                 <select value={tipoPago} onChange={e => setTipoPago(e.target.value)}
-                  style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, color: C.navy, background: C.lightGray }}>
+                  style={{ width: "100%", padding: "7px 10px", border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 13, color: C.navy, background: C.lightGray }}>
                   <option value="transferencia">Transferencia</option>
                   <option value="efectivo">Efectivo</option>
                   <option value="cheque">Cheque</option>
@@ -257,13 +257,18 @@ function ModPrestamos() {
   const [cortesPrestamoModal, setCortesPrestamoModal] = useState(null);
   const [ordenFecha, setOrdenFecha] = useState("asc");
   const [busqueda, setBusqueda] = useState("");
+  const [verPagados, setVerPagados] = useState(false);
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
   const pagados = prestamos.filter(p => p.pagado);
   const totalCartera = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
+  // Interés esperado: 10% sobre el SALDO actual de cada préstamo (no sobre el
+  // monto inicial), para que un abono a capital ya se refleje aquí. Los
+  // préstamos sin interés pactado (interes_mensual en 0) se excluyen igual
+  // que antes.
   const totalInteresesEsperados = activos.filter(p => parseFloat(p.interes_mensual||0) > 0)
-    .reduce((a, p) => a + parseFloat(p.interes_mensual || 0), 0);
+    .reduce((a, p) => a + calcularInteresMensual(parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0)), 0);
   const totalInteresesNoCobrados = resumenIntereses
     .reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
 
@@ -360,7 +365,7 @@ function ModPrestamos() {
             <Btn color={C.orange} onClick={handleAgregar} loading={saving}>Registrar</Btn>
           </div>
         </div>
-        {f.monto && <div style={{ background: C.goldLight, borderRadius: 8, padding: "7px 10px", fontSize: 12, marginTop: -4 }}>
+        {f.monto && <div style={{ background: C.goldLight, borderRadius: 2, padding: "7px 10px", fontSize: 12, marginTop: -4 }}>
           Interés (10%): <b>{fmt(calcularInteresMensual(f.monto))}</b> / mes
         </div>}
       </Card>
@@ -374,24 +379,29 @@ function ModPrestamos() {
             <div style={{ position: "relative" }}>
               <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", fontSize: 13 }}>🔍</span>
               <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar deudor..."
-                style={{ paddingLeft: 28, paddingRight: 28, paddingTop: 6, paddingBottom: 6, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.navy, background: C.lightGray, width: 180 }}/>
+                style={{ paddingLeft: 28, paddingRight: 28, paddingTop: 6, paddingBottom: 6, border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12, color: C.navy, background: C.lightGray, width: 180 }}/>
               {busqueda && <button onClick={() => setBusqueda("")} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", fontSize: 14, color: C.oxford }}>✕</button>}
             </div>
             <button onClick={() => setOrdenFecha(o => o === "asc" ? "desc" : "asc")}
-              style={{ display: "flex", alignItems: "center", gap: 5, background: C.navyLight, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, color: C.navy, fontWeight: 700, cursor: "pointer" }}>
+              style={{ display: "flex", alignItems: "center", gap: 5, background: C.navyLight, border: `1px solid ${C.border}`, borderRadius: 2, padding: "6px 12px", fontSize: 11, color: C.navy, fontWeight: 700, cursor: "pointer" }}>
               📅 {ordenFecha === "asc" ? "↑ Más antiguo" : "↓ Más reciente"}
             </button>
           </div>
         </div>
+        <p style={{ margin: "-6px 0 10px", fontSize: 11, color: C.oxford }}>
+          El interés mostrado se calcula al 10% sobre el saldo actual, no sobre el monto inicial:
+          si el deudor abona a capital, el interés del mes siguiente ya baja.
+        </p>
         <Tabla
-          headers={["#", "Deudor", "Fecha", "Monto", "Interés/mes", "Capital abonado", "Saldo", "Estado interés", "Nota", "Acciones"]}
+          headers={["#", "Deudor", "Fecha", "Monto", "Interés/mes (10% saldo)", "Capital abonado", "Saldo", "Estado interés", "Nota", "Acciones"]}
           rows={activosPagina.map(p => {
             const saldo = parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0);
+            const interesSobreSaldo = calcularInteresMensual(saldo);
             const mesesPendientes = pendientesPorPrestamo[p.id] || 0;
             return [
               p.id, p.deudor_nombre,
               fmtFecha(p.fecha_prestamo),
-              fmt(p.monto), fmt(p.interes_mensual), fmt(p.capital_abonado || 0),
+              fmt(p.monto), fmt(interesSobreSaldo), fmt(p.capital_abonado || 0),
               <b key={`s${p.id}`} style={{ color: saldo <= 0 ? C.green : C.orange }}>{fmt(saldo)}</b>,
               mesesPendientes > 0
                 ? <Badge key={`ip${p.id}`} color={C.red} bg={C.redLight}>⚠ {mesesPendientes} mes(es) pendiente{mesesPendientes > 1 ? "s" : ""}</Badge>
@@ -418,12 +428,19 @@ function ModPrestamos() {
       </Card>
 
       {pagados.length > 0 && <Card>
-        <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Pagados ({pagados.length})</p>
-        <Tabla
-          headers={["#", "Deudor", "Fecha préstamo", "Monto", "Fecha pago", "Nota"]}
-          rows={pagadosPagina.map(p => [p.id, p.deudor_nombre, fmtFecha(p.fecha_prestamo), fmt(p.monto), fmtFecha(p.fecha_pago), p.nota || "—"])}
-        />
-        <PaginadorPagados/>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: verPagados ? 6 : 0 }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.oxford }}>Pagados ({pagados.length})</p>
+          <Btn small onClick={() => setVerPagados(v => !v)}>{verPagados ? "Ocultar" : "Ver pagados"}</Btn>
+        </div>
+        {verPagados && (
+          <>
+            <Tabla
+              headers={["#", "Deudor", "Fecha préstamo", "Monto", "Fecha pago", "Nota"]}
+              rows={pagadosPagina.map(p => [p.id, p.deudor_nombre, fmtFecha(p.fecha_prestamo), fmt(p.monto), fmtFecha(p.fecha_pago), p.nota || "—"])}
+            />
+            <PaginadorPagados/>
+          </>
+        )}
       </Card>}
 
       {abonoPrestamo && (
@@ -449,7 +466,7 @@ function ModalHistorialCliente({ clienteId, onClose }) {
 
       {!loading && data.cliente && (
         <>
-          <div style={{ background: C.navyLight, borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+          <div style={{ background: C.navyLight, borderRadius: 2, padding: "10px 14px", marginBottom: 14 }}>
             <p style={{ margin: 0, fontWeight: 700, color: C.navy }}>{data.cliente.nombre} {data.cliente.apellido_pat} {data.cliente.apellido_mat}</p>
             <p style={{ margin: "4px 0 0", fontSize: 12, color: C.oxford }}>{data.cliente.telefono || "sin teléfono"} · {data.cliente.direccion || "sin dirección"}</p>
           </div>
@@ -589,7 +606,7 @@ function ModAhorro() {
             a.apellido_pat, a.apellido_mat, a.nombre,
             editId === a.id
               ? <input key={`i${a.id}`} type="number" value={editValor} onChange={e => setEditValor(e.target.value)}
-                  style={{ width: 90, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>
+                  style={{ width: 90, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}/>
               : fmt(a.cantidad),
             editId === a.id
               ? <Btn key={`g${a.id}`} small color={C.green} onClick={() => guardarEdicion(a.id)}>Guardar</Btn>
@@ -659,7 +676,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
           <Kpi etiqueta="Interés (8% anual)" valor={fmt(interes)} tono="yellow"/>
           <Kpi etiqueta="Total a entregar" valor={fmt(totalConInteres)} tono="green"/>
         </Kpis>
-        <div style={{ background: C.lightGray, borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
+        <div style={{ background: C.lightGray, borderRadius: 2, padding: "12px 14px", marginBottom: 14 }}>
           <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 700, color: C.oxford }}>Registrar aportación quincenal</p>
           <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr auto", gap: 8, alignItems: "end" }}>
             <Inp label="Fecha" type="date" value={fecha} onChange={e => setFecha(e.target.value)}/>
@@ -809,7 +826,7 @@ function ModCaja() {
       <Card>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.oxford }}>Participantes ({caja.length})</p>
-          <div style={{ background: C.navyLight, borderRadius: 8, padding: "5px 12px", fontSize: 11, color: C.navy, fontWeight: 600 }}>
+          <div style={{ background: C.navyLight, borderRadius: 2, padding: "5px 12px", fontSize: 11, color: C.navy, fontWeight: 600 }}>
             📋 Clic en "Movimientos" para registrar aportaciones quincenales
           </div>
         </div>
@@ -931,12 +948,12 @@ function ModPagosPlazos() {
           <div style={{ marginBottom: 9 }}>
             <label style={{ display: "block", fontSize: 12, color: C.oxford, marginBottom: 3, fontWeight: 600 }}>Cuota mensual ($)</label>
             <input type="number" value={f.cuota} onChange={s("cuota")}
-              style={{ width: "100%", padding: "7px 10px", border: `2px solid ${C.gold}`, borderRadius: 8, fontSize: 13, color: C.navy, background: C.goldLight, boxSizing: "border-box", fontWeight: 700 }}/>
+              style={{ width: "100%", padding: "7px 10px", border: `2px solid ${C.gold}`, borderRadius: 2, fontSize: 13, color: C.navy, background: C.goldLight, boxSizing: "border-box", fontWeight: 700 }}/>
           </div>
           <div style={{ marginBottom: 9 }}><Btn onClick={handleAgregar} loading={saving}>Agregar</Btn></div>
         </div>
         {f.costo && f.meses_total && (
-          <div style={{ background: C.goldLight, borderRadius: 8, padding: "7px 10px", fontSize: 12, marginTop: -4 }}>
+          <div style={{ background: C.goldLight, borderRadius: 2, padding: "7px 10px", fontSize: 12, marginTop: -4 }}>
             Cuota calculada: <b>{fmt(parseFloat(f.costo) / parseInt(f.meses_total))}</b> / mes
           </div>
         )}
@@ -962,13 +979,15 @@ function ModPagosPlazos() {
               }
               const pend = p.meses_total - p.meses_pagados;
               const rest = (p.costo||0) - (p.abonado||0);
-              // El avance se calcula sobre el dinero (abonado/costo), la misma
-              // base que ya se muestra en las columnas Abonado/Restante — así
-              // la barra nunca queda inconsistente con esos números aunque se
-              // edite el abonado o el costo sin tocar meses_pagados.
-              const pct = p.costo > 0
-                ? Math.round((parseFloat(p.abonado || 0) / parseFloat(p.costo)) * 100)
-                : (p.meses_total ? Math.round((p.meses_pagados / p.meses_total) * 100) : 0);
+              // El avance se calcula sobre los MESES pagados (meses_pagados/meses_total),
+              // que es el campo que en realidad se edita en esta pantalla ("Pagados").
+              // Antes se calculaba sobre el dinero (abonado/costo) y por eso, al editar
+              // solo "Pagados" sin tocar "Abonado", la barra se quedaba congelada aunque
+              // "Pendientes" sí cambiara. meses_total es obligatorio al crear el artículo,
+              // así que solo se cae al cálculo por dinero si por algún motivo viniera en 0.
+              const pct = p.meses_total > 0
+                ? Math.round((parseFloat(p.meses_pagados || 0) / parseFloat(p.meses_total)) * 100)
+                : (p.costo > 0 ? Math.round((parseFloat(p.abonado || 0) / parseFloat(p.costo)) * 100) : 0);
               return [
                 p.material, fmt(p.costo), p.meses_total, p.meses_pagados, pend, fmt(p.cuota), fmt(p.abonado), fmt(rest),
                 <div key={`bar${p.id}`} style={{display:"flex",alignItems:"center",gap:4}}>
@@ -1061,7 +1080,7 @@ function ModalInformeDeudor({ clienteId, onClose }) {
                       <tr key={p.id} style={{ background: i%2===0 ? C.cardBg : C.rowAlt }}>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmtFecha(p.fecha_prestamo)}</td>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(p.monto)}</td>
-                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(p.interes_mensual)}</td>
+                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{fmt(calcularInteresMensual(saldo))}</td>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, fontWeight: 700, color: saldo > 0 ? C.orange : C.green }}>{fmt(saldo)}</td>
                         <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
                           {p.pagado
@@ -1127,8 +1146,9 @@ function ModResumen({ irA }) {
 
   const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
   const totalCartera        = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
+  // Igual que en la pestaña Préstamos: 10% sobre el saldo actual, no sobre el monto inicial.
   const totalInteresEsperado= activos.filter(p => parseFloat(p.interes_mensual||0) > 0)
-                                .reduce((a, p) => a + parseFloat(p.interes_mensual || 0), 0);
+                                .reduce((a, p) => a + calcularInteresMensual(parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0)), 0);
   const totalInteresNoCobrado = resumenIntereses.reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
   const totalAhorros        = ahorros.reduce((a, x) => a + parseFloat(x.cantidad || 0), 0);
   const totalCaja           = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
@@ -1261,31 +1281,34 @@ function ModResumen({ irA }) {
         </Card>
       </div>
 
-      {/* Flujo de caja mensual: interés + capital cobrado, últimos 6 meses */}
-      {flujoMensual && flujoMensual.length > 0 && (
-        <Card style={{ marginBottom: 16 }}>
-          <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Flujo de caja mensual</p>
-          <p style={{ margin: "0 0 8px", fontSize: 10, color: C.oxford }}>Interés y capital cobrado, últimos 6 meses</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={flujoMensual.map(m => ({
-              mes: (() => { const [y, mo] = m.mes.split("-"); const meses=["","Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]; return `${meses[parseInt(mo)]} ${y.slice(2)}`; })(),
-              "Interés cobrado": parseFloat(m.interes_cobrado || 0),
-              "Capital cobrado": parseFloat(m.capital_cobrado || 0),
-            }))}>
-              <CartesianGrid strokeDasharray="3 3" stroke={hex(C.border)}/>
-              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: C.oxford }}/>
-              <YAxis tick={{ fontSize: 11, fill: C.oxford }}/>
-              <Tooltip formatter={v => fmt(v)}/>
-              <Legend wrapperStyle={{ fontSize: 12 }}/>
-              <Bar dataKey="Interés cobrado" fill={hex(C.gold)} radius={[4,4,0,0]}/>
-              <Bar dataKey="Capital cobrado" fill={hex(C.navy)} radius={[4,4,0,0]}/>
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-      )}
+      {/* Flujo de caja, ranking de deudores e indicadores: mismo grid de 3
+          columnas que las gráficas de arriba, para que todo el tablero se
+          vea parejo en vez de una barra enorme a lo ancho seguida de 2 columnas. */}
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
 
-      {/* Ranking de deudores + indicadores */}
-      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* Flujo de caja mensual: interés + capital cobrado, últimos 6 meses */}
+        {flujoMensual && flujoMensual.length > 0 && (
+          <Card>
+            <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Flujo de caja mensual</p>
+            <p style={{ margin: "0 0 8px", fontSize: 10, color: C.oxford }}>Interés y capital cobrado, últimos 6 meses</p>
+            <ResponsiveContainer width="100%" height={230}>
+              <BarChart data={flujoMensual.map(m => ({
+                mes: (() => { const [y, mo] = m.mes.split("-"); const meses=["","Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]; return `${meses[parseInt(mo)]} ${y.slice(2)}`; })(),
+                "Interés cobrado": parseFloat(m.interes_cobrado || 0),
+                "Capital cobrado": parseFloat(m.capital_cobrado || 0),
+              }))}>
+                <CartesianGrid strokeDasharray="3 3" stroke={hex(C.border)}/>
+                <XAxis dataKey="mes" tick={{ fontSize: 10, fill: C.oxford }}/>
+                <YAxis tick={{ fontSize: 10, fill: C.oxford }} width={38}/>
+                <Tooltip formatter={v => fmt(v)}/>
+                <Legend wrapperStyle={{ fontSize: 11 }}/>
+                <Bar dataKey="Interés cobrado" fill={hex(C.gold)} radius={[4,4,0,0]}/>
+                <Bar dataKey="Capital cobrado" fill={hex(C.navy)} radius={[4,4,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        )}
+
         <Card>
           <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Ranking de deudores</p>
           <p style={{ margin: "0 0 12px", fontSize: 10, color: C.oxford }}>Haz clic en un nombre para ver su informe individual</p>
@@ -1296,7 +1319,7 @@ function ModResumen({ irA }) {
               .filter(r => r.cliente_id === clienteId)
               .reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
             return (
-              <div key={clienteId} style={{ marginBottom: 12, cursor: "pointer", borderRadius: 8, padding: "8px 10px", background: C.lightGray, border: `1px solid ${C.border}` }}
+              <div key={clienteId} style={{ marginBottom: 12, cursor: "pointer", borderRadius: 2, padding: "8px 10px", background: C.lightGray, border: `1px solid ${C.border}` }}
                 onClick={() => setDeudorModal(clienteId)}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
                   <span style={{ fontWeight: 700, color: C.navy }}>{i+1}. {nombre}</span>
@@ -1305,8 +1328,8 @@ function ModResumen({ irA }) {
                     {pendiente > 0 && <Badge color={C.red} bg={C.redLight}>⚠ {fmt(pendiente)}</Badge>}
                   </div>
                 </div>
-                <div style={{ background: C.border, borderRadius: 6, height: 8 }}>
-                  <div style={{ background: i===0 ? C.orange : C.headerBg, width: `${(monto/maxM)*100}%`, height: 8, borderRadius: 6, transition: "width .3s" }}/>
+                <div style={{ background: C.border, borderRadius: 2, height: 8 }}>
+                  <div style={{ background: i===0 ? C.orange : C.headerBg, width: `${(monto/maxM)*100}%`, height: 8, borderRadius: 2, transition: "width .3s" }}/>
                 </div>
                 <p style={{ margin: "4px 0 0", fontSize: 10, color: C.oxford }}>👆 Clic para ver informe completo</p>
               </div>
@@ -1409,9 +1432,9 @@ function ModUsuarios() {
                 u.id, u.nombre, u.username,
                 <input key={`co${u.id}`} type="email" value={editF.correo} onChange={e => setEditF(x => ({ ...x, correo: e.target.value }))}
                   placeholder="correo@ejemplo.com"
-                  style={{ width: 150, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}/>,
+                  style={{ width: 150, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}/>,
                 <select key={`ro${u.id}`} value={editF.rol_id} onChange={e => setEditF(x => ({ ...x, rol_id: e.target.value }))}
-                  style={{ padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}>
+                  style={{ padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}>
                   {roles.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
                 </select>,
                 <Badge key={`e${u.id}`} color={u.activo?C.green:C.red} bg={u.activo?C.greenLight:C.redLight}>{u.activo?"Activo":"Inactivo"}</Badge>,
@@ -1537,8 +1560,12 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
   const [formatoBackup, setFormatoBackup] = useState("xlsx");
   const [exportando, setExportando] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
+  const [verHistorial, setVerHistorial] = useState(false);
   const { data: historial, error: errorHistorial, reload: reloadHistorial } = useApiData("/api/historial-accesos");
-  const { itemsPagina: historialPagina, Paginador: PaginadorHistorial } = usePaginacion(historial, 20);
+  // Solo interesan los accesos más recientes; el backend ya manda como
+  // máximo 200 ordenados del más nuevo al más viejo, aquí nos quedamos
+  // solo con los últimos 20 (sin paginador: no hay más que ver).
+  const historialReciente = historial.slice(0, 20);
 
   // El historial de accesos se refresca solo una vez por semana mientras la
   // pantalla siga abierta (no hace falta más seguido: es un registro de
@@ -1703,7 +1730,7 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
       </div>
 
       {rol === "administrador" && (
-      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
 
         {/* Alertas — días de anticipación */}
         <Card style={tarjetaChica}>
@@ -1723,7 +1750,7 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
               <Btn color={C.orange} onClick={handleGuardar} loading={saving}>Guardar</Btn>
             </div>
           </div>
-          {msg && <div style={{ background: C.greenLight, color: C.green, fontSize: 12, padding: "7px 10px", borderRadius: 8, marginTop: 4 }}>{msg}</div>}
+          {msg && <div style={{ background: C.greenLight, color: C.green, fontSize: 12, padding: "7px 10px", borderRadius: 2, marginTop: 4 }}>{msg}</div>}
         </Card>
 
         {/* Correo combinado */}
@@ -1741,7 +1768,7 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
             <div style={{ display: "flex", gap: 8 }}>
               {["xlsx", "csv", "sql"].map(f => (
                 <button key={f} onClick={() => setFormatoBackup(f)} style={{
-                  padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  padding: "5px 14px", borderRadius: 2, fontSize: 12, fontWeight: 700, cursor: "pointer",
                   border: `2px solid ${formatoBackup === f ? C.orange : C.border}`,
                   background: formatoBackup === f ? C.orangeLight : C.lightGray,
                   color: formatoBackup === f ? C.orange : C.oxford,
@@ -1769,17 +1796,47 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
               { icon: "📊", texto: "Informe ejecutivo (cartera, caja, top deudores)" },
               { icon: "💾", texto: `Respaldo de base de datos en ${formatoBackup.toUpperCase()}` },
             ].map((item, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: C.lightGray, borderRadius: 8, padding: "6px 10px", fontSize: 12, color: C.oxford }}>
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: C.lightGray, borderRadius: 2, padding: "6px 10px", fontSize: 12, color: C.oxford }}>
                 <span style={{ fontSize: 15 }}>{item.icon}</span>
                 {item.texto}
               </div>
             ))}
           </div>
 
-          <div style={{ background: C.goldLight, borderRadius: 8, padding: "8px 12px", marginTop: 12, fontSize: 11, color: "#8B6914" }}>
+          <div style={{ background: C.goldLight, borderRadius: 2, padding: "8px 12px", marginTop: 12, fontSize: 11, color: "#8B6914" }}>
             <b>Destinatarios:</b> todos los usuarios con rol <b>administrador</b> o <b>analista</b> que tengan correo registrado en la base de datos.
           </div>
         </Card>
+
+        {/* Historial de accesos — solo visible para administrador (el backend ya lo
+            protege también). Oculto por defecto: se despliega solo si se solicita,
+            y muestra nada más los últimos 20 intentos. */}
+        {!errorHistorial && historial.length > 0 && (
+          <Card style={tarjetaChica}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <p style={{ ...tituloChico, margin: 0 }}>🕵️ Historial de accesos</p>
+              <Btn small onClick={() => setVerHistorial(v => !v)}>{verHistorial ? "Ocultar" : "Ver historial"}</Btn>
+            </div>
+            {verHistorial && (
+              <>
+                <p style={{ ...textoChico, marginTop: 8 }}>
+                  Últimos {historialReciente.length} intentos de inicio de sesión (exitosos y fallidos), con IP de origen. Se actualiza solo cada semana.
+                </p>
+                <Tabla
+                  headers={["Usuario", "Resultado", "IP", "Fecha"]}
+                  rows={historialReciente.map((h, i) => [
+                    h.username,
+                    <Badge key={i} color={h.exito ? C.green : C.red} bg={h.exito ? C.greenLight : C.redLight}>
+                      {h.exito ? "Exitoso" : "Fallido"}
+                    </Badge>,
+                    h.ip,
+                    h.fecha,
+                  ])}
+                />
+              </>
+            )}
+          </Card>
+        )}
 
         {/* Backup y restauración completa de la base de datos */}
         <Card style={tarjetaChica}>
@@ -1795,7 +1852,7 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
 
             <label style={{
               display: "inline-flex", alignItems: "center", gap: 6,
-              padding: "9px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+              padding: "9px 16px", borderRadius: 2, fontSize: 13, fontWeight: 700,
               cursor: restaurando ? "not-allowed" : "pointer",
               background: C.redLight, color: C.red, border: `2px solid ${C.red}`,
               opacity: restaurando ? 0.6 : 1,
@@ -1811,36 +1868,12 @@ function ModConfiguracion({ rol, verClientes, setVerClientes, verUsuarios, setVe
             </label>
           </div>
 
-          <div style={{ background: C.redLight, borderRadius: 8, padding: "8px 12px", marginTop: 14, fontSize: 11, color: C.red }}>
+          <div style={{ background: C.redLight, borderRadius: 2, padding: "8px 12px", marginTop: 14, fontSize: 11, color: C.red }}>
             <b>⚠️ Cuidado:</b> restaurar sobrescribe los datos actuales del sistema y no se puede deshacer. Úsalo solo con un respaldo confiable.
           </div>
         </Card>
 
         <Config2FA/>
-
-        {/* Historial de accesos — solo visible para administrador (el backend ya lo protege también) */}
-        {!errorHistorial && historial.length > 0 && (
-          <Card style={tarjetaChica}>
-            <p style={tituloChico}>🕵️ Historial de accesos</p>
-            <p style={{ ...textoChico, marginBottom: 12 }}>
-              Últimos {historial.length} intentos de inicio de sesión (exitosos y fallidos), con IP de origen. Se actualiza solo cada semana.
-            </p>
-            <div>
-              <Tabla
-                headers={["Usuario", "Resultado", "IP", "Fecha"]}
-                rows={historialPagina.map((h, i) => [
-                  h.username,
-                  <Badge key={i} color={h.exito ? C.green : C.red} bg={h.exito ? C.greenLight : C.redLight}>
-                    {h.exito ? "Exitoso" : "Fallido"}
-                  </Badge>,
-                  h.ip,
-                  h.fecha,
-                ])}
-              />
-              <PaginadorHistorial/>
-            </div>
-          </Card>
-        )}
       </div>
       )}
     </div>
@@ -1861,7 +1894,7 @@ function AlertasBell() {
         )}
       </button>
       {open && (
-        <div style={{ position: "absolute", top: 36, right: 0, background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,.2)", width: 300, maxWidth: "calc(100vw - 24px)", zIndex: 1000, padding: 12 }}>
+        <div style={{ position: "absolute", top: 36, right: 0, background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 2, boxShadow: "0 4px 16px rgba(0,0,0,.2)", width: 300, maxWidth: "calc(100vw - 24px)", zIndex: 1000, padding: 12 }}>
           <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: C.navy }}>Réditos próximos a vencer</p>
           {alertas.length === 0
             ? <p style={{ fontSize: 12, color: C.oxford }}>Sin alertas pendientes.</p>
@@ -1952,7 +1985,7 @@ function ModalResetPassword({ onClose }) {
 
         {step === 2 && (
           <>
-            <div style={{ background: C.navyLight, borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12 }}>
+            <div style={{ background: C.navyLight, borderRadius: 2, padding: "8px 12px", marginBottom: 14, fontSize: 12 }}>
               {infoMsg}
             </div>
             <Inp label="Código de 6 dígitos" value={codigo} onChange={e => setCodigo(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="123456" autoFocus/>
@@ -1965,7 +1998,7 @@ function ModalResetPassword({ onClose }) {
         )}
 
         {step === 3 && (
-          <div style={{ background: C.greenLight, color: C.green, fontSize: 13, padding: "12px 14px", borderRadius: 8 }}>{msg}</div>
+          <div style={{ background: C.greenLight, color: C.green, fontSize: 13, padding: "12px 14px", borderRadius: 2 }}>{msg}</div>
         )}
     </Modal>
   );
@@ -2001,7 +2034,7 @@ function Login({ onLogin }) {
   }
 
   return (
-    <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 16px", boxSizing: "border-box" }}>
+    <div style={{ background: C.lightGray, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 16px", boxSizing: "border-box" }}>
       <Card style={{ width: 320, maxWidth: "100%" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20 }}>
           <LogoLogin/>
@@ -2015,7 +2048,7 @@ function Login({ onLogin }) {
               onChange={e => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
               placeholder="123456" autoFocus/>
           )}
-          {error && <div style={{ background: C.redLight, color: C.red, fontSize: 12, padding: "7px 10px", borderRadius: 8, marginBottom: 10 }}>{error}</div>}
+          {error && <div style={{ background: C.redLight, color: C.red, fontSize: 12, padding: "7px 10px", borderRadius: 2, marginBottom: 10 }}>{error}</div>}
           <Btn color={C.orange} loading={loading}>{pide2fa ? "Verificar" : "Iniciar sesión"}</Btn>
         </form>
         {/* NUEVO: enlace olvidé mi contraseña */}
@@ -2063,10 +2096,10 @@ function BuscadorGlobal({ onVerDeudor }) {
         onFocus={() => setAbierto(true)}
         onBlur={() => setTimeout(() => setAbierto(false), 150)}
         placeholder="🔍 Buscar cliente o préstamo..."
-        style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "none", fontSize: 12, boxSizing: "border-box" }}
+        style={{ width: "100%", padding: "7px 10px", borderRadius: 2, border: "none", fontSize: 12, boxSizing: "border-box" }}
       />
       {abierto && q.trim().length >= 2 && (
-        <div style={{ position: "absolute", top: 34, left: 0, width: "max(230px, 100%)", maxWidth: "calc(100vw - 24px)", background: C.cardBg, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,.3)", zIndex: 100, maxHeight: 320, overflowY: "auto" }}>
+        <div style={{ position: "absolute", top: 34, left: 0, width: "max(230px, 100%)", maxWidth: "calc(100vw - 24px)", background: C.cardBg, borderRadius: 2, boxShadow: "0 4px 16px rgba(0,0,0,.3)", zIndex: 100, maxHeight: 320, overflowY: "auto" }}>
           {!hayResultados && <p style={{ margin: 0, padding: 12, fontSize: 12, color: C.oxford }}>Sin resultados</p>}
           {resultados?.clientes.length > 0 && (
             <div>
@@ -2165,28 +2198,28 @@ export default function App() {
   return (
     <ConfirmProvider>
     <Toaster position="top-right" toastOptions={{ style: { fontSize: 13, maxWidth: 380 }, success: { iconTheme: { primary: C.green, secondary: C.white } }, error: { iconTheme: { primary: C.red, secondary: C.white } } }}/>
-    <div style={{ fontFamily: "'Segoe UI',system-ui,sans-serif", background: C.lightGray, minHeight: "100vh" }}>
+    <div style={{ background: C.lightGray, minHeight: "100vh" }}>
       <div className="app-header" style={{ background: C.headerBg, padding: "0 20px", display: "flex", alignItems: "center", gap: 14, height: 56, boxShadow: "0 2px 6px rgba(0,0,0,.3)" }}>
         <Logo size={40}/>
         <div className="ocultar-movil">
-          <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: 2, color: C.gold, lineHeight: 1.1 }}>JGM</div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#a0b8d8", letterSpacing: 0.5, lineHeight: 1.1 }}>Gonzas <span style={{ color: C.orange }}>systems</span></div>
+          <div style={{ fontFamily: "var(--d)", fontSize: 15, fontWeight: 700, letterSpacing: ".22em", color: C.gold, lineHeight: 1.1 }}>JGM</div>
+          <div style={{ fontFamily: "var(--m)", fontSize: 10, fontWeight: 500, color: C.oxford, letterSpacing: ".1em", lineHeight: 1.3, marginTop: 2 }}>Gonzas <span style={{ color: C.orange }}>systems</span></div>
         </div>
         <div className="sp" style={{ flex: 1 }}/>
         <div className="buscador-global">
           <BuscadorGlobal onVerDeudor={setDeudorGlobal}/>
         </div>
         <div style={{ textAlign: "right", marginRight: 14 }}>
-          <div style={{ fontSize: 12, color: C.white, fontWeight: 700 }}>{user.nombre}</div>
-          <div style={{ fontSize: 10, color: C.gold, textTransform: "uppercase" }}>{user.rol}</div>
+          <div style={{ fontSize: 12, color: C.navy, fontWeight: 700 }}>{user.nombre}</div>
+          <div style={{ fontFamily: "var(--m)", fontSize: 10, color: C.gold, letterSpacing: ".08em", textTransform: "uppercase" }}>{user.rol}</div>
         </div>
         <AlertasBell/>
         <button onClick={toggleTema} title={tema === "claro" ? "Cambiar a modo oscuro" : "Cambiar a modo claro"}
-          style={{ background: "transparent", border: `1px solid ${C.gold}`, borderRadius: 8, width: 32, height: 32, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          style={{ background: "transparent", border: `1px solid ${C.gold}`, borderRadius: 2, width: 32, height: 32, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           {tema === "claro" ? "🌙" : "☀️"}
         </button>
         <Btn small color={C.orange} onClick={handleLogout}>Salir</Btn>
-        <div className="ocultar-movil" style={{ fontSize: 11, color: "#8fa8c8", marginLeft: 14 }}>
+        <div className="ocultar-movil" style={{ fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".04em", color: C.oxford, marginLeft: 14 }}>
           {new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </div>
       </div>
@@ -2198,7 +2231,8 @@ export default function App() {
               display: "flex", alignItems: "center", gap: 7, padding: "11px 18px",
               background: active ? C.headerBg : "transparent", border: "none",
               borderBottom: active ? `3px solid ${C.gold}` : "3px solid transparent",
-              color: active ? C.gold : "#b0bcd4", fontSize: 13, fontWeight: active ? 700 : 400, cursor: "pointer",
+              color: active ? C.gold : C.oxford, fontSize: 12, fontWeight: active ? 600 : 500, cursor: "pointer",
+              fontFamily: "var(--d)", letterSpacing: ".08em", textTransform: "uppercase",
             }}>
               <span style={{ fontSize: 15 }}>{m.icon}</span>{m.label}
             </button>
