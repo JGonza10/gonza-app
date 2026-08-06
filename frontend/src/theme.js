@@ -84,10 +84,6 @@ export function hex(varCss) {
   return valor.trim() || "#888";
 }
 
-// Paleta fija para series de gráficas (recharts). Hexadecimales literales
-// porque van directo a atributos SVG y deben verse bien en ambos temas.
-export const SERIES = ["#2E9BF0", "#FFD84D", "#2ED573", "#A78BFA", "#FF8A3D", "#38D6F0", "#FF4B4B"];
-
 // ── HELPERS DE FORMATO (sin cambios) ─────────────────────────────────────────
 export const fmt = n => n == null ? "—" :
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(n);

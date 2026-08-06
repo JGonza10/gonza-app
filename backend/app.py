@@ -59,20 +59,21 @@ def health():
 # token firmado criptográficamente. Nadie puede fabricar uno válido sin conocer
 # SECRET_KEY, que solo vive en el servidor.
 #
-# IMPORTANTE: define SECRET_KEY como variable de entorno en Railway con un
-# valor largo y aleatorio (ej. generado con: python -c "import secrets; print(secrets.token_hex(32))")
-# Si no la defines, el servidor genera una temporal al arrancar — funciona,
-# pero cada vez que Railway reinicie el contenedor, todas las sesiones activas
-# se invalidan y los usuarios tendrán que volver a iniciar sesión.
+# OBLIGATORIA: define SECRET_KEY como variable de entorno en Railway (o en tu
+# .env local) con un valor largo y aleatorio, ej. generado con:
+#   python -c "import secrets; print(secrets.token_hex(32))"
+# Sin ella la app se niega a arrancar — nunca se usa una clave insegura por
+# defecto ni se genera una aleatoria en cada arranque, porque eso invalidaría
+# todas las sesiones activas cada vez que el proceso se reinicia.
 
 SECRET_KEY = os.environ.get("SECRET_KEY")
 if not SECRET_KEY:
-    app.logger.warning(
-        "SECRET_KEY no está configurada. Usando una clave temporal: "
-        "las sesiones se invalidarán en cada reinicio del servidor. "
-        "Define SECRET_KEY en las variables de entorno de Railway."
+    raise RuntimeError(
+        "SECRET_KEY no está configurada. Defínela como variable de entorno "
+        "antes de arrancar la aplicación (en Railway: pestaña Variables del "
+        "servicio backend; en local: archivo .env). Genera un valor con: "
+        'python -c "import secrets; print(secrets.token_hex(32))"'
     )
-    SECRET_KEY = secrets.token_hex(32)
 
 _serializer = itsdangerous.URLSafeTimedSerializer(SECRET_KEY)
 TOKEN_SESION_MAX_AGE = 8 * 60 * 60   # 8 horas
@@ -1877,12 +1878,15 @@ def enviar_whatsapp(telefono, mensaje):
 def requiere_cron(f):
     """Decorador: permite la petición solo si el header X-Cron-Secret coincide
        con la variable de entorno CRON_SECRET.
-       También acepta llamadas de un administrador autenticado (pruebas manuales)."""
+       También acepta llamadas de un administrador autenticado (pruebas manuales).
+       Si CRON_SECRET no está configurado, la ruta queda BLOQUEADA para peticiones
+       no autenticadas (antes se dejaba pasar sin protección: cualquiera podía
+       disparar envío de correos/WhatsApp/backups sin credenciales)."""
     @wraps(f)
     def envoltura(*args, **kwargs):
         cron_secret = os.environ.get("CRON_SECRET", "")
 
-        # 1. Permitir si el header X-Cron-Secret es correcto
+        # 1. Permitir si el header X-Cron-Secret es correcto (y está configurado)
         header_secret = request.headers.get("X-Cron-Secret", "")
         if cron_secret and header_secret == cron_secret:
             return f(*args, **kwargs)
@@ -1892,13 +1896,12 @@ def requiere_cron(f):
         if not error and username and get_rol(username) == "administrador":
             return f(*args, **kwargs)
 
-        # 3. Si CRON_SECRET no está configurado en el entorno, advertir en lugar de bloquear
         if not cron_secret:
             app.logger.warning(
-                "ADVERTENCIA: CRON_SECRET no configurado. "
-                "Define esta variable de entorno en Railway para proteger las rutas de cron."
+                "CRON_SECRET no configurado: la ruta de cron permanece bloqueada "
+                "para peticiones no autenticadas. Define esta variable de entorno "
+                "en Railway para que el cron job externo pueda llamarla."
             )
-            return f(*args, **kwargs)
 
         return jsonify({"error": "No autorizado. Se requiere X-Cron-Secret válido."}), 401
     return envoltura
@@ -2211,19 +2214,6 @@ def enviar_informe_resumen():
     return jsonify({"enviados": enviados, "errores": errores})
 
 
-# ─── RUTA: RESUMEN ────────────────────────────────────────────────────────────
-
-@app.route("/api/resumen", methods=["GET"])
-@requiere_lectura("consultor")
-def get_resumen():
-    """Devuelve los totales del sistema (para el dashboard)."""
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM v_resumen;")
-    resumen = cur.fetchone()
-    conn.close()
-    return jsonify(dict(resumen))
-
 # ─── RUTAS: MOVIMIENTOS DE CAJA ───────────────────────────────────────────────
 
 @app.route("/api/caja/<int:cid>/movimientos", methods=["GET"])
@@ -2345,30 +2335,6 @@ def delete_movimiento_caja(cid, mid):
     conn.commit()
     conn.close()
     return jsonify({"mensaje": "Movimiento eliminado"})
-
-
-@app.route("/api/caja/resumen", methods=["GET"])
-@requiere_lectura("consultor")
-def get_caja_resumen():
-    """
-    Resumen global de la caja: total acumulado real (suma de movimientos),
-    interés proyectado 4% anual, y total a entregar.
-    """
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT
-            COUNT(DISTINCT c.id)                              AS total_participantes,
-            COALESCE(SUM(cm.monto), 0)                        AS total_acumulado,
-            COALESCE(SUM(cm.monto) * 0.04, 0)                 AS total_interes,
-            COALESCE(SUM(cm.monto) * 1.04, 0)                 AS total_a_entregar
-        FROM caja c
-        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id AND cm.eliminado_en IS NULL
-        WHERE c.eliminado_en IS NULL;
-    """)
-    row = cur.fetchone()
-    conn.close()
-    return jsonify(dict(row))
 
 # ─── RUTAS: RESET DE CONTRASEÑA (con código enviado al correo) ──────────────
 # Flujo:
