@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import toast, { Toaster } from "react-hot-toast";
 
-import { C, API_BASE, temaGuardado, aplicarTema, hex, fmt, fmtFecha, today, calcularInteresMensual, calcularCuotaMensual } from "./theme";
+import { C, API_BASE, TEMAS, temaGuardado, aplicarTema, hex, fmt, fmtFecha, today, calcularInteresMensual, calcularCuotaMensual } from "./theme";
 import { api, useApiData, usePaginacion, ConfirmProvider, useConfirm } from "./api";
 import { Logo, LogoLogin, Card, SectionTitle, Badge, Inp, Sel, Btn, Tabla, Kpi, Kpis, Modal, Cargando } from "./components/ui";
 
@@ -1916,6 +1916,47 @@ function AlertasBell() {
   );
 }
 
+// ── SELECTOR DE TEMA ──────────────────────────────────────────────────────────
+// Los 4 temas de Nexus (ver TEMAS en theme.js), con el mismo lenguaje visual
+// que su propio panel "Apariencia": tarjetas con nombre, descripción y una
+// muestra de 5 colores; la activa se marca con el borde encendido.
+function SelectorTema({ tema, onCambiar }) {
+  const [open, setOpen] = useState(false);
+  const actual = TEMAS.find(t => t.id === tema) || TEMAS[0];
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen(o => !o)} title={`Tema: ${actual.nombre}`}
+        style={{ background: "transparent", border: `1px solid ${C.gold}`, borderRadius: 2, height: 32, padding: "0 10px",
+          fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0, color: C.gold,
+          fontFamily: "var(--d)", letterSpacing: ".06em", textTransform: "uppercase" }}>
+        ◐ {actual.nombre}
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: 38, right: 0, background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 2, boxShadow: "0 4px 16px rgba(0,0,0,.2)", width: 260, maxWidth: "calc(100vw - 24px)", zIndex: 1000, padding: 10 }}>
+          <p style={{ margin: "0 0 8px", fontSize: 11, fontWeight: 700, color: C.oxford, textTransform: "uppercase", letterSpacing: ".08em" }}>Apariencia</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {TEMAS.map(t => (
+              <button key={t.id} onClick={() => { onCambiar(t.id); setOpen(false); }}
+                style={{ textAlign: "left", cursor: "pointer", padding: "8px 10px", borderRadius: 2, background: "transparent",
+                  border: `1px solid ${t.id === tema ? C.gold : C.border}` }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontFamily: "var(--d)", fontWeight: 600, fontSize: 12.5, letterSpacing: ".04em", textTransform: "uppercase", color: C.navy }}>{t.nombre}</span>
+                  <div style={{ display: "flex", gap: 3 }}>
+                    {t.muestra.map((c, i) => (
+                      <i key={i} style={{ display: "block", width: 12, height: 12, borderRadius: 2, background: c, border: "1px solid rgba(128,128,128,.35)" }}/>
+                    ))}
+                  </div>
+                </div>
+                <p style={{ margin: 0, fontSize: 10.5, color: C.oxford, lineHeight: 1.35 }}>{t.descripcion}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── LOGIN CON "OLVIDÉ MI CONTRASEÑA" ─────────────────────────────────────────
 function ModalResetPassword({ onClose }) {
   const [username, setUsername] = useState("");
@@ -2146,7 +2187,7 @@ export default function App() {
   const [verUsuarios, setVerUsuarios] = useState(false);
   const [deudorGlobal, setDeudorGlobal] = useState(null);
 
-  // ── TEMA (oscuro por defecto) ────────────────────────────────────────────
+  // ── TEMA (Nexus por defecto; 4 paletas seleccionables, ver TEMAS en theme.js) ─
   // Ya no mutamos el objeto C. Cada clave de C apunta a una variable CSS y el
   // tema se cambia poniendo data-tema en <html>; el navegador recalcula todo,
   // incluidos los elementos que se estilizan por clase (.pnl, .btn, .tbl...).
@@ -2154,10 +2195,6 @@ export default function App() {
   const [tema, setTema] = useState(temaGuardado);
 
   useEffect(() => { aplicarTema(tema); }, [tema]);
-
-  function toggleTema() {
-    setTema(t => (t === "claro" ? "oscuro" : "claro"));
-  }
 
   function handleLogin(userData) {
     sessionStorage.setItem("gonza_user", JSON.stringify(userData));
@@ -2214,10 +2251,7 @@ export default function App() {
           <div style={{ fontFamily: "var(--m)", fontSize: 10, color: C.gold, letterSpacing: ".08em", textTransform: "uppercase" }}>{user.rol}</div>
         </div>
         <AlertasBell/>
-        <button onClick={toggleTema} title={tema === "claro" ? "Cambiar a modo oscuro" : "Cambiar a modo claro"}
-          style={{ background: "transparent", border: `1px solid ${C.gold}`, borderRadius: 2, width: 32, height: 32, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          {tema === "claro" ? "🌙" : "☀️"}
-        </button>
+        <SelectorTema tema={tema} onCambiar={setTema}/>
         <Btn small color={C.orange} onClick={handleLogout}>Salir</Btn>
         <div className="ocultar-movil" style={{ fontFamily: "var(--m)", fontSize: 10, letterSpacing: ".04em", color: C.oxford, marginLeft: 14 }}>
           {new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}

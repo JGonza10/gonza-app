@@ -1,15 +1,24 @@
 /* ============================================================================
    estilos.css — Sistema GONZA
-   Sistema de diseño portado de NEXUS (nexus-hub.html): consola HUD oscura,
-   acentos dorado/cian, tipografía Chakra Petch + Barlow + JetBrains Mono,
-   bordes rectos y etiquetas en mayúsculas con tracking amplio.
-   Oscuro por defecto; el claro se activa con  <html data-tema="claro">.
+   Sistema de diseño portado de NEXUS (nexus-hub.html): consola HUD, acentos
+   fuertes, tipografía Chakra Petch + Barlow + JetBrains Mono, bordes rectos
+   y etiquetas en mayúsculas con tracking amplio.
+
+   Nexus no tiene un solo tema: tiene 4 paletas seleccionables (ver su propio
+   THEMES en el JS del hub). Se portan las 4, con el mismo id:
+     nexus   → oro + cian sobre negro azulado (el "de fábrica")
+     gonza   → cian + violeta, con dorado cálido en los enlaces
+     claro   → fondo claro, azul + morado, para trabajar de día
+     grafito → gris neutro sin brillos, para sesiones largas
+   Se elige poniendo  <html data-tema="nexus|gonza|claro|grafito">  (ver
+   theme.js → aplicarTema/TEMAS). "nexus" es el valor por defecto (:root sin
+   atributo, para que no haya parpadeo antes de que corra el JS).
    Ubicación: frontend/src/estilos.css   →  importar en index.js
    ========================================================================== */
 
 @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ── TOKENS: OSCURO (por defecto) ─────────────────────────────────────────── */
+/* ── TEMA: NEXUS (por defecto) ────────────────────────────────────────────── */
 :root {
   --bg:#05080E;      --bg2:#0C1420;
   --panel:#0C1420;   --panel2:#111B29;  --raise:#172335;
@@ -39,37 +48,98 @@
      botones (.btn) ahora son de contorno, sin relleno. */
   --grad:linear-gradient(180deg,#FFC94A 0%,#D9A324 100%);
 
+  /* Opacidad de las líneas de escaneo (body::before). 0 = apagadas. */
+  --scan:.028;
+
   --f:'Barlow',system-ui,-apple-system,'Segoe UI',sans-serif;
   --d:'Chakra Petch',var(--f);          /* titulares y control de marca */
   --m:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
   --r:2px;                              /* radio HUD: rectos, casi sin curva */
 }
 
-/* ── TOKENS: CLARO ───────────────────────────────────────────────────────── */
-:root[data-tema="claro"] {
-  --bg:#F2F3F0;      --bg2:#E9EAE4;
-  --panel:#FFFFFF;   --panel2:#F5F6F2;  --raise:#E9EAE2;
-  --line:#DEDDD2;    --line2:#CBD6DE;
-  --blue:#0F72C7;    --blue2:#0B5599;   --cyan:#0E7F97;
-  --red:#A31E27;     --yellow:#8A6D0B;  --green:#158F63;
-  --purple:#6B4FC7;  --orange:#B5541A;
-  --text:#181B15;    --muted:#5A5F51;   --muted2:#868C7A;
+/* ── TEMA: GONZA (cian + violeta, dorado cálido en los enlaces) ──────────── */
+:root[data-tema="gonza"] {
+  --bg:#040B16;      --bg2:#0A1B31;
+  --panel:#0A1B31;   --panel2:#0E2440;  --raise:#123055;
+  --line:rgba(95,211,255,.18);   --line2:rgba(169,139,255,.2);
+  --blue:#4C8FE0;    --blue2:#2E6BB8;   --cyan:#A98BFF;
+  --red:#F0555C;     --yellow:#5FD3FF;  --green:#4FE0C0;
+  --purple:#FFC46B;  --orange:#FF9A52;
+  --text:#D6E8F7;    --muted:#8AA6C0;   --muted2:#52708E;
 
-  --tint-blue:#E3EEFB;
-  --tint-yellow:#F7EFD6;
-  --tint-red:#F7E3E1;
-  --tint-green:#E1F3EB;
-  --tint-orange:#FBEAE0;
+  --tint-blue:rgba(76,143,224,.14);
+  --tint-yellow:rgba(95,211,255,.14);
+  --tint-red:rgba(240,85,92,.14);
+  --tint-green:rgba(79,224,192,.14);
+  --tint-orange:rgba(255,154,82,.14);
 
-  --campo:#F8F8F4;
+  --campo:#040B16;
   --fondo-app:
-    radial-gradient(1100px 620px at 18% -8%,#F0EBDA 0%,transparent 58%),
-    radial-gradient(900px 520px at 96% 4%,#E7F1EF 0%,transparent 52%),
-    linear-gradient(168deg,#F2F3F0 0%,#EFEFEA 48%,#EAEBE4 100%);
+    radial-gradient(1100px 620px at 18% -8%,rgba(95,211,255,.07) 0%,transparent 58%),
+    radial-gradient(900px 520px at 96% 4%,rgba(169,139,255,.06) 0%,transparent 52%),
+    linear-gradient(168deg,#040B16 0%,#071527 48%,#0A1B31 100%);
+  --panel-fondo:linear-gradient(180deg,rgba(14,36,64,.92),rgba(7,20,38,.92));
+  --side-fondo:linear-gradient(180deg,rgba(10,27,49,.72),rgba(4,11,22,.4));
+  --hover-fila:rgba(95,211,255,.03);
+  --grad:linear-gradient(180deg,#5FD3FF 0%,#2E9FD9 100%);
+  --scan:.03;
+}
+
+/* ── TEMA: CLARO (azul + morado sobre blanco, para trabajar de día) ──────── */
+:root[data-tema="claro"] {
+  --bg:#F1F4F8;      --bg2:#E9EEF5;
+  --panel:#FFFFFF;   --panel2:#F3F6FA;  --raise:#E9EEF5;
+  --line:rgba(10,95,192,.18);    --line2:rgba(107,55,201,.16);
+  --blue:#1C7ED6;    --blue2:#0F5FA8;   --cyan:#6B37C9;
+  --red:#C1272D;     --yellow:#0A5FC0;  --green:#0E7A57;
+  --purple:#B0288C;  --orange:#C2540C;
+  --text:#0F1C2B;    --muted:#42566E;   --muted2:#75899E;
+
+  --tint-blue:#DCEAFA;
+  --tint-yellow:#DCE9F8;
+  --tint-red:#F6DEDF;
+  --tint-green:#DCEFE8;
+  --tint-orange:#F5E1D3;
+
+  --campo:#F4F7FB;
+  --fondo-app:
+    radial-gradient(1100px 620px at 18% -8%,rgba(10,95,192,.05) 0%,transparent 58%),
+    radial-gradient(900px 520px at 96% 4%,rgba(107,55,201,.045) 0%,transparent 52%),
+    linear-gradient(168deg,#F1F4F8 0%,#EEF1F6 48%,#E9EEF5 100%);
   --panel-fondo:#FFFFFF;
   --side-fondo:linear-gradient(180deg,#11150D,#05080E);  /* la barra lateral se
-     queda oscura en ambos temas: es la firma de la marca, igual que en Nexus */
-  --hover-fila:rgba(24,27,21,.03);
+     queda oscura en los 4 temas: es la firma de la marca, igual que en Nexus */
+  --hover-fila:rgba(15,28,43,.03);
+  --grad:linear-gradient(180deg,#0A5FC0 0%,#084A99 100%);
+  --scan:0;
+}
+
+/* ── TEMA: GRAFITO (gris neutro, sin brillos, para sesiones largas) ──────── */
+:root[data-tema="grafito"] {
+  --bg:#121417;      --bg2:#1A1E23;
+  --panel:#1A1E23;   --panel2:#22272E;  --raise:#2A3038;
+  --line:rgba(226,230,234,.14);  --line2:rgba(127,178,217,.16);
+  --blue:#6FA8E0;    --blue2:#4A82BA;   --cyan:#7FB2D9;
+  --red:#E0645F;     --yellow:#E7EAEE;  --green:#8CC7A1;
+  --purple:#C9A66B;  --orange:#D98A4E;
+  --text:#E2E6EA;    --muted:#9AA4AE;   --muted2:#6B757F;
+
+  --tint-blue:rgba(111,168,224,.14);
+  --tint-yellow:rgba(231,234,238,.14);
+  --tint-red:rgba(224,100,95,.14);
+  --tint-green:rgba(140,199,161,.14);
+  --tint-orange:rgba(217,138,78,.14);
+
+  --campo:#121417;
+  --fondo-app:
+    radial-gradient(1100px 620px at 18% -8%,rgba(231,234,238,.04) 0%,transparent 58%),
+    radial-gradient(900px 520px at 96% 4%,rgba(127,178,217,.04) 0%,transparent 52%),
+    linear-gradient(168deg,#121417 0%,#15181C 48%,#1A1E23 100%);
+  --panel-fondo:linear-gradient(180deg,rgba(26,30,35,.92),rgba(18,20,23,.92));
+  --side-fondo:linear-gradient(180deg,rgba(20,23,27,.72),rgba(12,14,17,.4));
+  --hover-fila:rgba(226,230,234,.03);
+  --grad:linear-gradient(180deg,#E7EAEE 0%,#C3C9D1 100%);
+  --scan:0;
 }
 
 @media (prefers-color-scheme: light) {
@@ -88,12 +158,12 @@ body {
 }
 
 /* Barrido de líneas de escaneo, la firma HUD de Nexus. Muy tenue: no debe
-   competir con las cifras. Se apaga por completo en tema claro y al imprimir. */
+   competir con las cifras. La intensidad la da --scan (0 en claro/grafito,
+   apagándola por completo ahí, igual que en el propio Nexus). */
 body::before {
   content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
-  background:repeating-linear-gradient(0deg, rgba(143,233,255,.025) 0 1px, transparent 1px 3px);
+  background:repeating-linear-gradient(0deg, rgba(143,233,255,var(--scan)) 0 1px, transparent 1px 3px);
 }
-:root[data-tema="claro"] body::before { display:none }
 #root { position:relative; z-index:1 }
 
 button, input, select, textarea { font-family:inherit; font-size:inherit; color:inherit }
@@ -158,7 +228,7 @@ h1, h2, h3 {
 .emb { display:flex; gap:9px; align-items:center }
 .emb b {
   width:38px; height:38px; border-radius:50%; display:grid; place-items:center;
-  font-size:15px; border:1.5px solid; background:rgba(255,201,74,.03); cursor:pointer;
+  font-size:15px; border:1.5px solid; background:color-mix(in srgb, var(--yellow) 5%, transparent); cursor:pointer;
 }
 .emb b.az { border-color:var(--blue); color:var(--blue); box-shadow:0 0 18px -6px var(--blue) }
 .emb b.am { border-color:var(--yellow); color:var(--yellow); box-shadow:0 0 18px -6px var(--yellow) }
@@ -177,7 +247,7 @@ h1, h2, h3 {
 .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin-bottom:18px }
 .kpi {
   border:1px solid var(--c); border-radius:var(--r); padding:16px 18px;
-  background:rgba(255,201,74,.025);
+  background:color-mix(in srgb, var(--yellow) 4%, transparent);
   box-shadow:0 0 22px -10px var(--c), inset 0 0 26px -20px var(--c);
 }
 :root[data-tema="claro"] .kpi { background:var(--panel) }
@@ -216,7 +286,7 @@ h1, h2, h3 {
   font-family:var(--f);
 }
 .in::placeholder { color:var(--muted2) }
-.in:focus, .sel:focus, .ta:focus { border-color:var(--yellow); box-shadow:0 0 0 3px rgba(255,201,74,.14) }
+.in:focus, .sel:focus, .ta:focus { border-color:var(--yellow); box-shadow:0 0 0 3px color-mix(in srgb, var(--yellow) 16%, transparent) }
 .sel {
   appearance:none; cursor:pointer; padding-right:32px;
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8'><path d='M1 1l5 5 5-5' stroke='%238C9DB2' stroke-width='1.7' fill='none' stroke-linecap='round'/></svg>");
