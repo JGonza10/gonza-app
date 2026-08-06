@@ -57,18 +57,42 @@ export const C = {
 };
 
 /**
+ * Los 4 temas de Nexus, portados tal cual (mismo id, mismo nombre y
+ * descripción que en nexus-hub.html → const THEMES). Cada uno trae su
+ * hexadecimal de fondo (para la barra de estado del móvil/PWA) y 5 colores
+ * de muestra para pintar las tarjetas del selector (bg, acento, acento 2,
+ * enlaces, alerta — el mismo orden que usa el propio Nexus en su swatch).
+ */
+export const TEMAS = [
+  { id: "nexus",   nombre: "Nexus",   descripcion: "Oro y cian sobre negro azulado. El tema de fábrica.",
+    bg: "#05080E", muestra: ["#05080E", "#FFC94A", "#8FE9FF", "#B49CFF", "#D62B34"] },
+  { id: "gonza",   nombre: "Gonza Systems", descripcion: "Cian y violeta, con dorado cálido en los enlaces.",
+    bg: "#040B16", muestra: ["#040B16", "#5FD3FF", "#A98BFF", "#FFC46B", "#F0555C"] },
+  { id: "claro",   nombre: "Taller",  descripcion: "Fondo claro para trabajar de día o con proyector.",
+    bg: "#F1F4F8", muestra: ["#F1F4F8", "#0A5FC0", "#6B37C9", "#B0288C", "#C1272D"] },
+  { id: "grafito", nombre: "Grafito", descripcion: "Gris neutro, sin brillos. Para sesiones largas.",
+    bg: "#121417", muestra: ["#121417", "#E7EAEE", "#7FB2D9", "#C9A66B", "#E0645F"] },
+];
+
+const IDS_TEMAS = TEMAS.map(t => t.id);
+
+/**
  * Aplica el tema. Llamar desde App.jsx en lugar de Object.assign(C, ...).
- * @param {"claro"|"oscuro"} tema
+ * @param {"nexus"|"gonza"|"claro"|"grafito"} tema
  */
 export function aplicarTema(tema) {
-  document.documentElement.setAttribute("data-tema", tema);
-  localStorage.setItem("gonza_tema", tema);
+  const id = IDS_TEMAS.includes(tema) ? tema : "nexus";
+  document.documentElement.setAttribute("data-tema", id);
+  localStorage.setItem("gonza_tema", id);
   // La barra de estado del móvil (PWA) también cambia
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", tema === "claro" ? "#F2F3F0" : "#05080E");
+  if (meta) meta.setAttribute("content", TEMAS.find(t => t.id === id).bg);
 }
 
-export const temaGuardado = () => localStorage.getItem("gonza_tema") || "oscuro";
+export const temaGuardado = () => {
+  const guardado = localStorage.getItem("gonza_tema");
+  return IDS_TEMAS.includes(guardado) ? guardado : "nexus";
+};
 
 /**
  * Resuelve una variable CSS a su hexadecimal real.
