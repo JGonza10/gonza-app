@@ -85,10 +85,13 @@
   --scan:.03;
 }
 
-/* ── TEMA: CLARO (azul + morado sobre blanco, para trabajar de día) ──────── */
+/* ── TEMA: CLARO (azul + morado, gris muy suave — nunca blanco puro) ──────── */
+/* --panel a #FFFFFF puro deslumbraba en pantalla; se baja a un gris azulado
+   casi imperceptible (~97% de luminosidad) que se sigue leyendo como "tema
+   claro" pero sin el brillo directo del blanco absoluto. */
 :root[data-tema="claro"] {
-  --bg:#F1F4F8;      --bg2:#E9EEF5;
-  --panel:#FFFFFF;   --panel2:#F3F6FA;  --raise:#E9EEF5;
+  --bg:#EBEFF4;      --bg2:#E2E7EE;
+  --panel:#F7F9FC;   --panel2:#EEF2F7;  --raise:#E5EAF1;
   --line:rgba(10,95,192,.18);    --line2:rgba(107,55,201,.16);
   --blue:#1C7ED6;    --blue2:#0F5FA8;   --cyan:#6B37C9;
   --red:#C1272D;     --yellow:#0A5FC0;  --green:#0E7A57;
@@ -101,12 +104,12 @@
   --tint-green:#DCEFE8;
   --tint-orange:#F5E1D3;
 
-  --campo:#F4F7FB;
+  --campo:#F0F3F8;
   --fondo-app:
     radial-gradient(1100px 620px at 18% -8%,rgba(10,95,192,.05) 0%,transparent 58%),
     radial-gradient(900px 520px at 96% 4%,rgba(107,55,201,.045) 0%,transparent 52%),
-    linear-gradient(168deg,#F1F4F8 0%,#EEF1F6 48%,#E9EEF5 100%);
-  --panel-fondo:#FFFFFF;
+    linear-gradient(168deg,#EBEFF4 0%,#E7EBF1 48%,#E2E7EE 100%);
+  --panel-fondo:#F7F9FC;
   --side-fondo:linear-gradient(180deg,#11150D,#05080E);  /* la barra lateral se
      queda oscura en los 4 temas: es la firma de la marca, igual que en Nexus */
   --hover-fila:rgba(15,28,43,.03);

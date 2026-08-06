@@ -606,7 +606,7 @@ function ModAhorro() {
             a.apellido_pat, a.apellido_mat, a.nombre,
             editId === a.id
               ? <input key={`i${a.id}`} type="number" value={editValor} onChange={e => setEditValor(e.target.value)}
-                  style={{ width: 90, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}/>
+                  style={{ width: 90, padding: "4px 6px", background: C.campo, color: C.navy, border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}/>
               : fmt(a.cantidad),
             editId === a.id
               ? <Btn key={`g${a.id}`} small color={C.green} onClick={() => guardarEdicion(a.id)}>Guardar</Btn>
@@ -701,14 +701,14 @@ function ModalMovimientosCaja({ participante, onClose }) {
                           <tr key={i} style={{ background: C.goldLight }}>
                             <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>{i+1}</td>
                             <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
-                              <input type="date" value={editF.fecha} onChange={e => setEditF(x=>({...x,fecha:e.target.value}))} style={{width:120,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>
+                              <input type="date" value={editF.fecha} onChange={e => setEditF(x=>({...x,fecha:e.target.value}))} style={{width:120,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>
                             </td>
                             <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
-                              <input type="number" value={editF.monto} onChange={e => setEditF(x=>({...x,monto:e.target.value}))} style={{width:80,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>
+                              <input type="number" value={editF.monto} onChange={e => setEditF(x=>({...x,monto:e.target.value}))} style={{width:80,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>
                             </td>
                             <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}`, color: C.oxford }}>—</td>
                             <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
-                              <input value={editF.nota} onChange={e => setEditF(x=>({...x,nota:e.target.value}))} style={{width:110,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>
+                              <input value={editF.nota} onChange={e => setEditF(x=>({...x,nota:e.target.value}))} style={{width:110,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>
                             </td>
                             <td style={{ padding: "5px 8px", borderBottom: `1px solid ${C.border}` }}>
                               <div style={{ display: "flex", gap: 4 }}>
@@ -838,11 +838,11 @@ function ModCaja() {
             if (editId === c.id) {
               return [
                 i+1,
-                <input key={`p${c.id}`} value={editF.participante} onChange={e => setEditF(x=>({...x,participante:e.target.value}))} style={{width:120,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
-                <input key={`q${c.id}`} type="number" value={editF.cuota} onChange={e => setEditF(x=>({...x,cuota:e.target.value}))} style={{width:80,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
+                <input key={`p${c.id}`} value={editF.participante} onChange={e => setEditF(x=>({...x,participante:e.target.value}))} style={{width:120,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
+                <input key={`q${c.id}`} type="number" value={editF.cuota} onChange={e => setEditF(x=>({...x,cuota:e.target.value}))} style={{width:80,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
                 <span key={`ca${c.id}`} style={{ fontSize: 11, color: C.oxford }}>{fmt(c.capital)} 🔒</span>,
                 "—","—",
-                <input key={`f${c.id}`} value={editF.fecha_inicio} onChange={e => setEditF(x=>({...x,fecha_inicio:e.target.value}))} style={{width:70,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
+                <input key={`f${c.id}`} value={editF.fecha_inicio} onChange={e => setEditF(x=>({...x,fecha_inicio:e.target.value}))} style={{width:70,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
                 <Btn key={`g${c.id}`} small color={C.green} onClick={() => guardarEdicion(c.id)}>Guardar</Btn>
               ];
             }
@@ -966,19 +966,23 @@ function ModPagosPlazos() {
             rows={plazos.map(p => {
               if (editId === p.id) {
                 return [
-                  <input key={`m${p.id}`} value={editF.material} onChange={e=>setEditF(x=>({...x,material:e.target.value}))} style={{width:100,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
-                  <input key={`c${p.id}`} type="number" value={editF.costo} onChange={e=>setEditF(x=>({...x,costo:e.target.value}))} style={{width:80,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
-                  <input key={`mt${p.id}`} type="number" value={editF.meses_total} onChange={e=>setEditF(x=>({...x,meses_total:e.target.value}))} style={{width:55,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
-                  <input key={`mp${p.id}`} type="number" value={editF.meses_pagados} onChange={e=>setEditF(x=>({...x,meses_pagados:e.target.value}))} style={{width:55,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
+                  <input key={`m${p.id}`} value={editF.material} onChange={e=>setEditF(x=>({...x,material:e.target.value}))} style={{width:100,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
+                  <input key={`c${p.id}`} type="number" value={editF.costo} onChange={e=>setEditF(x=>({...x,costo:e.target.value}))} style={{width:80,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
+                  <input key={`mt${p.id}`} type="number" value={editF.meses_total} onChange={e=>setEditF(x=>({...x,meses_total:e.target.value}))} style={{width:55,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
+                  <input key={`mp${p.id}`} type="number" value={editF.meses_pagados} onChange={e=>setEditF(x=>({...x,meses_pagados:e.target.value}))} style={{width:55,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
                   "—",
-                  <input key={`cu${p.id}`} type="number" value={editF.cuota} onChange={e=>setEditF(x=>({...x,cuota:e.target.value}))} style={{width:70,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
-                  <input key={`ab${p.id}`} type="number" value={editF.abonado} onChange={e=>setEditF(x=>({...x,abonado:e.target.value}))} style={{width:80,padding:"4px 6px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12}}/>,
+                  <input key={`cu${p.id}`} type="number" value={editF.cuota} onChange={e=>setEditF(x=>({...x,cuota:e.target.value}))} style={{width:70,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
+                  <input key={`ab${p.id}`} type="number" value={editF.abonado} onChange={e=>setEditF(x=>({...x,abonado:e.target.value}))} style={{width:80,padding:"4px 6px",background:C.campo,color:C.navy,border:`1px solid ${C.border}`,borderRadius:2,fontSize:12}}/>,
                   "—","—",
                   <Btn key={`g${p.id}`} small color={C.green} onClick={() => guardarEdicion(p.id)}>Guardar</Btn>
                 ];
               }
               const pend = p.meses_total - p.meses_pagados;
-              const rest = (p.costo||0) - (p.abonado||0);
+              // Restante = cuota × meses pendientes: lo que falta por pagar según las
+              // cuotas que quedan. Antes era costo - abonado (dinero), que no cuadraba
+              // con "Pagados"/"Pendientes"/"Avance" (ya basados en meses, no en dinero)
+              // y podía quedar desfasado si "Abonado" no se actualizaba junto con "Pagados".
+              const rest = (parseFloat(p.cuota) || 0) * pend;
               // El avance se calcula sobre los MESES pagados (meses_pagados/meses_total),
               // que es el campo que en realidad se edita en esta pantalla ("Pagados").
               // Antes se calculaba sobre el dinero (abonado/costo) y por eso, al editar
@@ -1432,9 +1436,9 @@ function ModUsuarios() {
                 u.id, u.nombre, u.username,
                 <input key={`co${u.id}`} type="email" value={editF.correo} onChange={e => setEditF(x => ({ ...x, correo: e.target.value }))}
                   placeholder="correo@ejemplo.com"
-                  style={{ width: 150, padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}/>,
+                  style={{ width: 150, padding: "4px 6px", background: C.campo, color: C.navy, border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}/>,
                 <select key={`ro${u.id}`} value={editF.rol_id} onChange={e => setEditF(x => ({ ...x, rol_id: e.target.value }))}
-                  style={{ padding: "4px 6px", border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}>
+                  style={{ padding: "4px 6px", background: C.campo, color: C.navy, border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12 }}>
                   {roles.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
                 </select>,
                 <Badge key={`e${u.id}`} color={u.activo?C.green:C.red} bg={u.activo?C.greenLight:C.redLight}>{u.activo?"Activo":"Inactivo"}</Badge>,
@@ -2143,7 +2147,7 @@ function BuscadorGlobal({ onVerDeudor }) {
         onFocus={() => setAbierto(true)}
         onBlur={() => setTimeout(() => setAbierto(false), 150)}
         placeholder="🔍 Buscar cliente o préstamo..."
-        style={{ width: "100%", padding: "7px 10px", borderRadius: 2, border: "none", fontSize: 12, boxSizing: "border-box" }}
+        style={{ width: "100%", padding: "7px 10px", borderRadius: 2, border: "none", fontSize: 12, boxSizing: "border-box", background: C.campo, color: C.navy }}
       />
       {abierto && q.trim().length >= 2 && (
         <div style={{ position: "absolute", top: 34, left: 0, width: "max(230px, 100%)", maxWidth: "calc(100vw - 24px)", background: C.cardBg, borderRadius: 2, boxShadow: "0 4px 16px rgba(0,0,0,.3)", zIndex: 100, maxHeight: 320, overflowY: "auto" }}>
