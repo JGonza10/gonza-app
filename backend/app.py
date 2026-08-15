@@ -993,6 +993,108 @@ def prorrogar_corte(pid, cid):
     return jsonify({"mensaje": "Prórroga registrada"})
 
 
+# ─── REFINANCIACIÓN / REESTRUCTURACIÓN DE PRÉSTAMOS ──────────────────────────
+
+@app.route("/api/prestamos/refinanciar", methods=["POST"])
+@requiere_rol("administrador", "analista")
+def refinanciar_prestamos():
+    """Consolida uno o varios préstamos activos de un mismo cliente en un
+       préstamo nuevo: el saldo de capital pendiente (y, si se pide, el
+       interés mensual vencido sin cobrar) de los préstamos elegidos se
+       cierra como 'liquidado por refinanciación' y pasa a ser el monto
+       del préstamo nuevo, con su propia fecha y tasa de interés."""
+    data = request.get_json()
+    cliente_id = data.get("cliente_id")
+    try:
+        prestamo_ids = list({int(x) for x in (data.get("prestamo_ids") or [])})
+    except (TypeError, ValueError):
+        return jsonify({"error": "Lista de préstamos inválida"}), 400
+    fecha_prestamo = data.get("fecha_prestamo")
+    interes_mensual = _money(data.get("interes_mensual", 0))
+    incluir_intereses = bool(data.get("incluir_intereses_pendientes", True))
+    nota_usuario = (data.get("nota") or "").strip()
+
+    if not cliente_id or not prestamo_ids or not fecha_prestamo:
+        return jsonify({"error": "Faltan cliente, préstamos a refinanciar o fecha"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT nombre, apellido_pat, apellido_mat FROM clientes WHERE id = %s AND eliminado_en IS NULL;", (cliente_id,))
+    cliente = cur.fetchone()
+    if not cliente:
+        conn.close()
+        return jsonify({"error": "Cliente no encontrado"}), 400
+    deudor_nombre = f"{cliente['nombre']} {cliente['apellido_pat']} {cliente['apellido_mat'] or ''}".strip()
+
+    cur.execute("""
+        SELECT id, monto, capital_abonado, interes_mensual, fecha_prestamo
+        FROM prestamos
+        WHERE id = ANY(%s) AND cliente_id = %s AND pagado = FALSE AND eliminado_en IS NULL;
+    """, (prestamo_ids, cliente_id))
+    prestamos = cur.fetchall()
+    if len(prestamos) != len(prestamo_ids):
+        conn.close()
+        return jsonify({"error": "Uno o más préstamos no son válidos para refinanciar (ya pagados, eliminados o de otro cliente)"}), 400
+
+    total_saldo = sum((Decimal(str(p["monto"])) - Decimal(str(p["capital_abonado"]))) for p in prestamos)
+    if total_saldo <= 0:
+        conn.close()
+        return jsonify({"error": "El saldo total de los préstamos seleccionados es cero"}), 400
+
+    total_interes_pendiente = Decimal("0")
+    if incluir_intereses:
+        for p in prestamos:
+            if p["interes_mensual"] and p["interes_mensual"] > 0:
+                _generar_cortes_faltantes(cur, p["id"], p["interes_mensual"], p["fecha_prestamo"])
+        cur.execute("""
+            SELECT COALESCE(SUM(monto_interes), 0) AS total
+            FROM cortes_interes WHERE prestamo_id = ANY(%s) AND pagado = FALSE;
+        """, (prestamo_ids,))
+        total_interes_pendiente = Decimal(str(cur.fetchone()["total"]))
+
+    nuevo_monto = (total_saldo + total_interes_pendiente).quantize(Decimal("0.01"))
+
+    nota_nuevo = f"Refinanciación de préstamo(s) #{', #'.join(str(p['id']) for p in prestamos)}."
+    if nota_usuario:
+        nota_nuevo += f" {nota_usuario}"
+
+    cur.execute("""
+        INSERT INTO prestamos (deudor_nombre, cliente_id, fecha_prestamo, monto, interes_mensual, nota)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id;
+    """, (deudor_nombre, cliente_id, fecha_prestamo, nuevo_monto, interes_mensual, nota_nuevo))
+    nuevo_id = cur.fetchone()["id"]
+    _registrar_auditoria(cur, "prestamos", nuevo_id, "crear",
+                          detalle={"refinanciacion_de": prestamo_ids, "monto": str(nuevo_monto)})
+
+    for p in prestamos:
+        saldo_p = Decimal(str(p["monto"])) - Decimal(str(p["capital_abonado"]))
+        if saldo_p > 0:
+            cur.execute("""
+                INSERT INTO pagos_prestamo (prestamo_id, fecha_pago, monto_interes, monto_capital, nota)
+                VALUES (%s, %s, 0, %s, %s);
+            """, (p["id"], fecha_prestamo, saldo_p, f"Cierre por refinanciación en préstamo #{nuevo_id}"))
+        cur.execute("""
+            UPDATE prestamos
+            SET pagado = TRUE, fecha_pago = %s, capital_abonado = monto,
+                nota = COALESCE(NULLIF(nota, ''), '') || %s
+            WHERE id = %s;
+        """, (fecha_prestamo, f" [Refinanciado en préstamo #{nuevo_id} el {fecha_prestamo}]", p["id"]))
+        if incluir_intereses:
+            cur.execute("""
+                UPDATE cortes_interes
+                SET pagado = TRUE, fecha_pago = %s, monto_pagado = monto_interes,
+                    nota = COALESCE(NULLIF(nota, ''), '') || %s
+                WHERE prestamo_id = %s AND pagado = FALSE;
+            """, (fecha_prestamo, f" Capitalizado en préstamo #{nuevo_id}", p["id"]))
+        _registrar_auditoria(cur, "prestamos", p["id"], "editar", detalle={"refinanciado_en": nuevo_id})
+
+    conn.commit()
+    conn.close()
+    return jsonify({"id": nuevo_id, "monto": float(nuevo_monto), "mensaje": "Préstamos refinanciados"}), 201
+
+
 @app.route("/api/intereses-pendientes", methods=["GET"])
 @requiere_lectura("consultor")
 def get_resumen_intereses_pendientes():
@@ -1034,6 +1136,94 @@ def get_resumen_intereses_pendientes():
     rows = cur.fetchall()
     conn.close()
     return jsonify(list(rows))
+
+
+def _generar_xlsx_cartera_vencida():
+    """Construye el reporte de cartera vencida: préstamos activos con al
+       menos un corte de interés mensual pendiente de cobro."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, fecha_prestamo, interes_mensual
+        FROM prestamos
+        WHERE pagado = FALSE AND interes_mensual > 0 AND eliminado_en IS NULL;
+    """)
+    activos = cur.fetchall()
+    for p in activos:
+        _generar_cortes_faltantes(cur, p["id"], p["interes_mensual"], p["fecha_prestamo"])
+    conn.commit()
+
+    cur.execute("""
+        SELECT
+            p.id AS prestamo_id, p.deudor_nombre, c.telefono,
+            p.monto, (p.monto - p.capital_abonado) AS saldo,
+            p.interes_mensual, p.fecha_prestamo::text AS fecha_prestamo,
+            COUNT(ci.id) FILTER (WHERE ci.pagado = FALSE)                       AS cortes_pendientes,
+            COALESCE(SUM(ci.monto_interes) FILTER (WHERE ci.pagado = FALSE), 0) AS interes_pendiente,
+            (MIN(ci.periodo) FILTER (WHERE ci.pagado = FALSE))::text            AS primer_corte_pendiente
+        FROM prestamos p
+        JOIN clientes c ON c.id = p.cliente_id
+        LEFT JOIN cortes_interes ci ON ci.prestamo_id = p.id
+        WHERE p.pagado = FALSE AND p.monto > 0 AND p.eliminado_en IS NULL
+        GROUP BY p.id, p.deudor_nombre, c.telefono, p.monto, p.capital_abonado, p.interes_mensual, p.fecha_prestamo
+        HAVING COUNT(ci.id) FILTER (WHERE ci.pagado = FALSE) > 0
+        ORDER BY interes_pendiente DESC;
+    """)
+    filas = cur.fetchall()
+    conn.close()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cartera vencida"
+    negrita = Font(bold=True)
+    ws.append(["#", "Deudor", "Teléfono", "Monto prestado", "Saldo", "Interés mensual",
+               "Meses de interés vencidos", "Interés pendiente", "Primer mes sin cobrar"])
+    for celda in ws[1]:
+        celda.font = negrita
+
+    total_saldo = Decimal("0")
+    total_interes = Decimal("0")
+    for f in filas:
+        ws.append([
+            f["prestamo_id"], f["deudor_nombre"], f["telefono"] or "—",
+            float(f["monto"] or 0), float(f["saldo"] or 0), float(f["interes_mensual"] or 0),
+            f["cortes_pendientes"], float(f["interes_pendiente"] or 0),
+            f["primer_corte_pendiente"] or "—",
+        ])
+        total_saldo += Decimal(str(f["saldo"] or 0))
+        total_interes += Decimal(str(f["interes_pendiente"] or 0))
+
+    ws.append([])
+    ws.append(["", "TOTAL", "", "", float(total_saldo), "", "", float(total_interes), ""])
+    for celda in ws[ws.max_row]:
+        celda.font = negrita
+
+    for col, ancho in zip("ABCDEFGHI", (6, 26, 14, 14, 14, 14, 12, 16, 18)):
+        ws.column_dimensions[col].width = ancho
+    ws.freeze_panes = "A2"
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@app.route("/api/reportes/cartera-vencida/xlsx", methods=["GET"])
+@requiere_lectura("consultor")
+def get_cartera_vencida_xlsx():
+    """Descarga en Excel los préstamos activos con intereses mensuales sin cobrar."""
+    xlsx_bytes = _generar_xlsx_cartera_vencida()
+    archivo = f"cartera_vencida_{hoy_mx().isoformat()}.xlsx"
+    return Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{archivo}"'},
+    )
+
 
 # ─── RUTAS: CLIENTES ──────────────────────────────────────────────────────────
 
@@ -2955,6 +3145,104 @@ def get_informe_deudor_pdf(cliente_id):
     return Response(
         pdf_bytes,
         mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{archivo}"'},
+    )
+
+
+def _generar_xlsx_informe_deudor(datos):
+    """Construye el estado de cuenta del deudor en Excel (una hoja por
+       sección), a partir de los mismos datos que usa el PDF
+       (_datos_informe_deudor), para que ambos formatos nunca se desalineen."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    negrita = Font(bold=True)
+    wb = Workbook()
+
+    ws = wb.active
+    ws.title = "Resumen"
+    ws.append(["Estado de cuenta", datos["deudor"]])
+    ws.append(["Fecha del informe", hoy_mx().isoformat()])
+    ws.append([])
+    r = datos["resumen"]
+    for etiqueta, valor in [
+        ("Total prestado (activos)", r["total_prestado"]),
+        ("Interés mensual esperado", r["total_interes_mensual"]),
+        ("Interés pendiente acumulado", r["interes_pendiente_acumulado"]),
+        ("Interés cobrado (histórico)", r["interes_cobrado_total"]),
+        ("Préstamos activos", r["prestamos_activos"]),
+        ("Préstamos pagados", r["prestamos_pagados"]),
+    ]:
+        ws.append([etiqueta, valor])
+    for fila in ws.iter_rows(min_row=1, max_row=2):
+        for celda in fila:
+            celda.font = negrita
+    ws.column_dimensions["A"].width = 32
+    ws.column_dimensions["B"].width = 20
+
+    ws2 = wb.create_sheet("Préstamos")
+    ws2.append(["Fecha", "Monto", "Interés mensual", "Saldo capital", "Estado", "Nota"])
+    for celda in ws2[1]:
+        celda.font = negrita
+    for p in datos["prestamos"]:
+        ws2.append([
+            p["fecha_prestamo"] or "—",
+            float(p["monto"] or 0),
+            float(p["interes_mensual"] or 0),
+            float(p["saldo_capital"] or 0),
+            "Pagado" if p["pagado"] else "Activo",
+            p.get("nota") or "",
+        ])
+    for col, ancho in zip("ABCDEF", (12, 14, 16, 14, 10, 40)):
+        ws2.column_dimensions[col].width = ancho
+
+    ws3 = wb.create_sheet("Intereses")
+    ws3.append(["Periodo", "Monto interés", "Pagado", "Fecha de pago", "Monto pagado", "Tipo de pago"])
+    for celda in ws3[1]:
+        celda.font = negrita
+    for co in datos["cortes"]:
+        ws3.append([
+            co["periodo"] or "—",
+            float(co["monto_interes"] or 0),
+            "Sí" if co["pagado"] else "No",
+            co["fecha_pago"] or "—",
+            float(co["monto_pagado"] or 0),
+            co.get("tipo_pago") or "—",
+        ])
+    for col, ancho in zip("ABCDEF", (12, 14, 10, 14, 14, 16)):
+        ws3.column_dimensions[col].width = ancho
+
+    ws4 = wb.create_sheet("Abonos")
+    ws4.append(["Fecha", "Interés", "Capital", "Tipo de pago", "Nota"])
+    for celda in ws4[1]:
+        celda.font = negrita
+    for a in datos["abonos"]:
+        ws4.append([
+            a["fecha_pago"] or "—",
+            float(a["monto_interes"] or 0),
+            float(a["monto_capital"] or 0),
+            a.get("tipo_pago") or "—",
+            a.get("nota") or "",
+        ])
+    for col, ancho in zip("ABCDE", (12, 12, 12, 16, 40)):
+        ws4.column_dimensions[col].width = ancho
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@app.route("/api/clientes/<int:cliente_id>/informe-deudor/xlsx", methods=["GET"])
+@requiere_lectura("consultor")
+def get_informe_deudor_xlsx(cliente_id):
+    """Descarga el estado de cuenta del deudor en Excel (una hoja por sección: resumen, préstamos, intereses y abonos)."""
+    datos = _datos_informe_deudor(cliente_id)
+    xlsx_bytes = _generar_xlsx_informe_deudor(datos)
+    archivo = f"estado_cuenta_{datos['deudor'].strip().replace(' ', '_')}_{hoy_mx().isoformat()}.xlsx"
+    return Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{archivo}"'},
     )
 

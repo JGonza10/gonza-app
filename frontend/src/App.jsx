@@ -3,7 +3,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Ba
 import toast, { Toaster } from "react-hot-toast";
 
 import { C, API_BASE, TEMAS, temaGuardado, aplicarTema, hex, fmt, fmtFecha, today, calcularInteresMensual, calcularCuotaMensual } from "./theme";
-import { api, useApiData, usePaginacion, ConfirmProvider, useConfirm } from "./api";
+import { api, useApiData, usePaginacion, ConfirmProvider, useConfirm, descargarArchivo } from "./api";
 import { Logo, LogoLogin, Card, SectionTitle, Badge, Inp, Sel, Btn, Tabla, Kpi, Kpis, Modal, Cargando } from "./components/ui";
 
 // ── MÓDULO: PRÉSTAMOS ─────────────────────────────────────────────────────────
@@ -246,6 +246,108 @@ function ModalCortesInteres({ prestamo, onClose }) {
   );
 }
 
+// ── MODAL: REFINANCIACIÓN / REESTRUCTURACIÓN DE PRÉSTAMOS ────────────────────
+function ModalRefinanciar({ clientes, prestamos, resumenIntereses, onClose, onSaved }) {
+  const [clienteId, setClienteId] = useState("");
+  const [seleccionados, setSeleccionados] = useState([]);
+  const [fecha, setFecha] = useState(today);
+  const [interes, setInteres] = useState("");
+  const [incluirIntereses, setIncluirIntereses] = useState(true);
+  const [nota, setNota] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const prestamosCliente = prestamos.filter(p => !p.pagado && String(p.cliente_id) === String(clienteId));
+  const saldoDe = p => parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0);
+  const interesPendienteDe = p => {
+    const r = resumenIntereses.find(x => x.prestamo_id === p.id);
+    return r ? parseFloat(r.total_interes_pendiente || 0) : 0;
+  };
+
+  function toggle(id) {
+    setSeleccionados(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  }
+
+  const totalSaldo = seleccionados.reduce((a, id) => {
+    const p = prestamosCliente.find(x => x.id === id);
+    return a + (p ? saldoDe(p) : 0);
+  }, 0);
+  const totalInteresPendiente = incluirIntereses ? seleccionados.reduce((a, id) => {
+    const p = prestamosCliente.find(x => x.id === id);
+    return a + (p ? interesPendienteDe(p) : 0);
+  }, 0) : 0;
+  const nuevoMonto = totalSaldo + totalInteresPendiente;
+
+  async function handleGuardar() {
+    if (!clienteId) return toast.error("Selecciona un cliente");
+    if (seleccionados.length === 0) return toast.error("Selecciona al menos un préstamo a refinanciar");
+    if (nuevoMonto <= 0) return toast.error("El monto a refinanciar debe ser mayor a 0");
+    setSaving(true);
+    try {
+      const res = await api("/api/prestamos/refinanciar", {
+        method: "POST",
+        body: JSON.stringify({
+          cliente_id: parseInt(clienteId),
+          prestamo_ids: seleccionados,
+          fecha_prestamo: fecha,
+          interes_mensual: parseFloat(interes || 0),
+          incluir_intereses_pendientes: incluirIntereses,
+          nota,
+        }),
+      });
+      toast.success(`Nuevo préstamo #${res.id} por ${fmt(res.monto)}`);
+      onSaved();
+    } catch (e) { toast.error(e.message); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Modal titulo="🔄 Refinanciar préstamos" sub="Consolida uno o varios préstamos activos de un mismo cliente en un préstamo nuevo" onClose={onClose}
+      acciones={<>
+        <Btn color={C.orange} onClick={handleGuardar} loading={saving}>Refinanciar</Btn>
+        <Btn color={C.oxford} onClick={onClose}>Cancelar</Btn>
+      </>}>
+      <Sel label="Cliente" value={clienteId} onChange={e => { setClienteId(e.target.value); setSeleccionados([]); }}>
+        <option value="">Selecciona un cliente</option>
+        {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido_pat} {c.apellido_mat || ""}</option>)}
+      </Sel>
+
+      {clienteId && (
+        prestamosCliente.length === 0
+          ? <p style={{ fontSize: 12, color: C.oxford, margin: "10px 0" }}>Este cliente no tiene préstamos activos.</p>
+          : <div style={{ margin: "10px 0" }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: C.oxford, margin: "0 0 6px" }}>Selecciona los préstamos a consolidar</p>
+              {prestamosCliente.map(p => (
+                <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 12, borderBottom: `1px solid ${C.border}` }}>
+                  <input type="checkbox" checked={seleccionados.includes(p.id)} onChange={() => toggle(p.id)}/>
+                  <span>#{p.id} · {fmtFecha(p.fecha_prestamo)} · Saldo: <b>{fmt(saldoDe(p))}</b> · Interés pendiente: <b>{fmt(interesPendienteDe(p))}</b></span>
+                </label>
+              ))}
+            </div>
+      )}
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, margin: "6px 0 14px" }}>
+        <input type="checkbox" checked={incluirIntereses} onChange={e => setIncluirIntereses(e.target.checked)}/>
+        Capitalizar el interés pendiente de los préstamos seleccionados en el nuevo capital
+      </label>
+
+      <div className="grid-resp" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10 }}>
+        <Inp label="Fecha del nuevo préstamo" type="date" value={fecha} onChange={e => setFecha(e.target.value)}/>
+        <Inp label="Interés mensual ($)" type="number" value={interes} onChange={e => setInteres(e.target.value)}
+          placeholder={nuevoMonto > 0 ? String(calcularInteresMensual(nuevoMonto)) : ""}/>
+        <Inp label="Nota" value={nota} onChange={e => setNota(e.target.value)} placeholder="Motivo de la refinanciación"/>
+      </div>
+
+      {seleccionados.length > 0 && (
+        <div style={{ background: C.goldLight, borderRadius: 2, padding: "10px 12px", marginTop: 10 }}>
+          <p style={{ margin: 0, fontSize: 12 }}>Saldo de capital seleccionado: <b>{fmt(totalSaldo)}</b></p>
+          {incluirIntereses && <p style={{ margin: "4px 0 0", fontSize: 12 }}>+ Interés pendiente capitalizado: <b>{fmt(totalInteresPendiente)}</b></p>}
+          <p style={{ margin: "4px 0 0", fontSize: 13, fontWeight: 700, color: C.navy }}>Monto del préstamo nuevo: {fmt(nuevoMonto)}</p>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function ModPrestamos() {
   const { data: prestamos, loading, reload } = useApiData("/api/prestamos");
   const { data: clientes } = useApiData("/api/clientes");
@@ -258,15 +360,13 @@ function ModPrestamos() {
   const [ordenFecha, setOrdenFecha] = useState("asc");
   const [busqueda, setBusqueda] = useState("");
   const [verPagados, setVerPagados] = useState(false);
+  const [refinanciarAbierto, setRefinanciarAbierto] = useState(false);
+  const [descargandoCartera, setDescargandoCartera] = useState(false);
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
   const pagados = prestamos.filter(p => p.pagado);
-  const totalCartera = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
-  // Interés esperado: 10% sobre el SALDO actual de cada préstamo (no sobre el
-  // monto inicial), para que un abono a capital ya se refleje aquí. Los
-  // préstamos sin interés pactado (interes_mensual en 0) se excluyen igual
-  // que antes.
+  const totalCartera = activos.reduce((a, p) => a + (parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0)), 0);
   const totalInteresesEsperados = activos.filter(p => parseFloat(p.interes_mensual||0) > 0)
     .reduce((a, p) => a + calcularInteresMensual(parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0)), 0);
   const totalInteresesNoCobrados = resumenIntereses
@@ -315,6 +415,14 @@ function ModPrestamos() {
       });
       reload();
     } catch (e) { toast.error(e.message); }
+  }
+
+  async function handleDescargarCarteraVencida() {
+    setDescargandoCartera(true);
+    try {
+      await descargarArchivo("/api/reportes/cartera-vencida/xlsx", `cartera_vencida_${today}.xlsx`);
+    } catch (e) { toast.error(e.message); }
+    finally { setDescargandoCartera(false); }
   }
 
   async function handleDescargarPagare(p) {
@@ -386,12 +494,10 @@ function ModPrestamos() {
               style={{ display: "flex", alignItems: "center", gap: 5, background: C.navyLight, border: `1px solid ${C.border}`, borderRadius: 2, padding: "6px 12px", fontSize: 11, color: C.navy, fontWeight: 700, cursor: "pointer" }}>
               📅 {ordenFecha === "asc" ? "↑ Más antiguo" : "↓ Más reciente"}
             </button>
+            <Btn small color="#6B46C1" onClick={() => setRefinanciarAbierto(true)}>🔄 Refinanciar</Btn>
+            <Btn small color={C.green} onClick={handleDescargarCarteraVencida} loading={descargandoCartera}>📊 Cartera vencida</Btn>
           </div>
         </div>
-        <p style={{ margin: "-6px 0 10px", fontSize: 11, color: C.oxford }}>
-          El interés mostrado se calcula al 10% sobre el saldo actual, no sobre el monto inicial:
-          si el deudor abona a capital, el interés del mes siguiente ya baja.
-        </p>
         <Tabla
           headers={["#", "Deudor", "Fecha", "Monto", "Interés/mes (10% saldo)", "Capital abonado", "Saldo", "Estado interés", "Nota", "Acciones"]}
           rows={activosPagina.map(p => {
@@ -451,6 +557,11 @@ function ModPrestamos() {
       )}
       {editarPrestamo && (
         <ModalEditarPrestamo prestamo={editarPrestamo} onClose={() => setEditarPrestamo(null)} onSaved={() => { setEditarPrestamo(null); reload(); }}/>
+      )}
+      {refinanciarAbierto && (
+        <ModalRefinanciar clientes={clientes} prestamos={prestamos} resumenIntereses={resumenIntereses}
+          onClose={() => setRefinanciarAbierto(false)}
+          onSaved={() => { setRefinanciarAbierto(false); reload(); reloadIntereses(); }}/>
       )}
     </div>
   );
@@ -635,7 +746,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
   const [editF, setEditF] = useState({});
 
   const totalAportado = movimientos.reduce((a, m) => a + parseFloat(m.monto || 0), 0);
-  const interes = totalAportado * 0.08;
+  const interes = totalAportado * 0.0833;
   const totalConInteres = totalAportado + interes;
 
   async function handleRegistrar() {
@@ -673,7 +784,7 @@ function ModalMovimientosCaja({ participante, onClose }) {
     <Modal titulo={participante.participante} sub={`Cuota quincenal: ${fmt(participante.cuota)}`} onClose={onClose}>
         <Kpis>
           <Kpi etiqueta="Total aportado" valor={fmt(totalAportado)} tono="blue"/>
-          <Kpi etiqueta="Interés (8% anual)" valor={fmt(interes)} tono="yellow"/>
+          <Kpi etiqueta="Interés (8.33% anual)" valor={fmt(interes)} tono="yellow"/>
           <Kpi etiqueta="Total a entregar" valor={fmt(totalConInteres)} tono="green"/>
         </Kpis>
         <div style={{ background: C.lightGray, borderRadius: 2, padding: "12px 14px", marginBottom: 14 }}>
@@ -762,7 +873,7 @@ function ModCaja() {
 
   const totalCapital = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
   const totalCuota = caja.reduce((a, c) => a + parseFloat(c.cuota || 0), 0);
-  const interesProyectado = totalCapital * 0.08;
+  const interesProyectado = totalCapital * 0.0833;
 
   async function handleAgregar() {
     if (!f.cliente_id) return toast.error("Selecciona un cliente");
@@ -802,7 +913,7 @@ function ModCaja() {
       <Kpis>
         <Kpi etiqueta="Capital total acumulado" valor={fmt(totalCapital)} tono="blue"/>
         <Kpi etiqueta="Aportación quincenal total" valor={fmt(totalCuota)} tono="yellow"/>
-        <Kpi etiqueta="Interés anual proyectado (8%)" valor={fmt(interesProyectado)} tono="green"/>
+        <Kpi etiqueta="Interés anual proyectado (8.33%)" valor={fmt(interesProyectado)} tono="green"/>
       </Kpis>
 
       {/* Formulario HORIZONTAL */}
@@ -818,9 +929,6 @@ function ModCaja() {
           <Inp label="Fecha de inicio" value={f.fecha_inicio} onChange={s("fecha_inicio")} placeholder="15-ene"/>
           <div style={{ marginBottom: 9 }}><Btn onClick={handleAgregar} loading={saving}>Agregar</Btn></div>
         </div>
-        <p style={{ margin: "8px 0 0", fontSize: 10, color: C.oxford }}>
-          🔒 El capital acumulado se calcula automáticamente sumando los movimientos reales registrados en "📋 Movimientos" — no se puede editar a mano, así nunca se desincroniza.
-        </p>
       </Card>
 
       <Card>
@@ -831,9 +939,9 @@ function ModCaja() {
           </div>
         </div>
         <Tabla
-          headers={["No.", "Nombre", "Cuota quincenal", "Capital acumulado", "Interés (8%)", "Total estimado", "Inicio", "Acciones"]}
+          headers={["No.", "Nombre", "Cuota quincenal", "Capital acumulado", "Interés (8.33%)", "Total estimado", "Inicio", "Acciones"]}
           rows={caja.map((c, i) => {
-            const interes = parseFloat(c.capital || 0) * 0.08;
+            const interes = parseFloat(c.capital || 0) * 0.0833;
             const totalEstimado = parseFloat(c.capital || 0) + interes;
             if (editId === c.id) {
               return [
@@ -1024,6 +1132,15 @@ function ModPagosPlazos() {
 function ModalInformeDeudor({ clienteId, onClose }) {
   const { data, loading, error } = useApiData(`/api/clientes/${clienteId}/informe-deudor`);
   const [descargando, setDescargando] = useState(false);
+  const [descargandoXlsx, setDescargandoXlsx] = useState(false);
+
+  async function handleDescargarExcel() {
+    setDescargandoXlsx(true);
+    try {
+      await descargarArchivo(`/api/clientes/${clienteId}/informe-deudor/xlsx`, `estado_cuenta_${(data?.deudor || "deudor").replace(/\s+/g, "_")}.xlsx`);
+    } catch (e) { toast.error(e.message); }
+    finally { setDescargandoXlsx(false); }
+  }
 
   async function handleDescargarPDF() {
     setDescargando(true);
@@ -1056,7 +1173,10 @@ function ModalInformeDeudor({ clienteId, onClose }) {
 
   return (
     <Modal titulo="📋 Informe de deudor" sub={data?.deudor} onClose={onClose}
-      acciones={<Btn small color={C.orange} onClick={handleDescargarPDF} loading={descargando}>📄 Descargar PDF</Btn>}>
+      acciones={<>
+        <Btn small color={C.green} onClick={handleDescargarExcel} loading={descargandoXlsx}>📊 Descargar Excel</Btn>
+        <Btn small color={C.orange} onClick={handleDescargarPDF} loading={descargando}>📄 Descargar PDF</Btn>
+      </>}>
         {loading && <Cargando texto="Cargando informe..."/>}
         {error && <p style={{ color: C.red }}>Error: {error}</p>}
         {data && data.resumen && (
@@ -1149,14 +1269,13 @@ function ModResumen({ irA }) {
   if (lp || la || lc || lcart) return <Cargando texto="Cargando resumen..."/>;
 
   const activos = prestamos.filter(p => !p.pagado && p.monto > 0);
-  const totalCartera        = activos.reduce((a, p) => a + parseFloat(p.monto || 0), 0);
-  // Igual que en la pestaña Préstamos: 10% sobre el saldo actual, no sobre el monto inicial.
+  const totalCartera        = activos.reduce((a, p) => a + (parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0)), 0);
   const totalInteresEsperado= activos.filter(p => parseFloat(p.interes_mensual||0) > 0)
                                 .reduce((a, p) => a + calcularInteresMensual(parseFloat(p.monto || 0) - parseFloat(p.capital_abonado || 0)), 0);
   const totalInteresNoCobrado = resumenIntereses.reduce((a, r) => a + parseFloat(r.total_interes_pendiente || 0), 0);
   const totalAhorros        = ahorros.reduce((a, x) => a + parseFloat(x.cantidad || 0), 0);
   const totalCaja           = caja.reduce((a, c) => a + parseFloat(c.capital || 0), 0);
-  const interesAnualCaja    = totalCaja * 0.08;
+  const interesAnualCaja    = totalCaja * 0.0833;
 
   // Top deudores por capital activo. Se agrupa por cliente_id (no por
   // deudor_nombre): ese campo es una foto del nombre al crear cada préstamo,
@@ -1212,7 +1331,7 @@ function ModResumen({ irA }) {
         <Kpi etiqueta="Intereses no cobrados (total)" valor={fmt(totalInteresNoCobrado)} nota="acumulado histórico pendiente" tono="red" onClick={() => irA("prestamos")}/>
         <Kpi etiqueta="Ahorro total del grupo" valor={fmt(totalAhorros)} tono="green" onClick={() => irA("ahorro")}/>
         <Kpi etiqueta="Capital caja de ahorro" valor={fmt(totalCaja)} tono="orange" onClick={() => irA("caja")}/>
-        <Kpi etiqueta="Interés anual proyectado (8%)" valor={fmt(interesAnualCaja)} nota="sobre el capital de caja" tono="green" onClick={() => irA("caja")}/>
+        <Kpi etiqueta="Interés anual proyectado (8.33%)" valor={fmt(interesAnualCaja)} nota="sobre el capital de caja" tono="green" onClick={() => irA("caja")}/>
       </Kpis>
 
       {/* Gráficas */}

@@ -66,6 +66,24 @@ export async function api(path, options = {}) {
   return res.json();
 }
 
+// ── DESCARGA DE ARCHIVOS BINARIOS (PDF/XLSX) ─────────────────────────────────
+// Uso: await descargarArchivo("/api/reportes/cartera-vencida/xlsx", "cartera_vencida.xlsx");
+export async function descargarArchivo(path, nombreArchivo) {
+  const user = sessionStorage.getItem("gonza_user");
+  const token = user ? JSON.parse(user).token : "";
+  const res = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error("No se pudo generar el archivo");
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombreArchivo;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export function useApiData(endpoint) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
