@@ -32,7 +32,9 @@ import io
 import base64
 
 app = Flask(__name__)
-CORS(app)  # Permite que el frontend (diferente URL) llame a esta API
+# En producción restringe a FRONTEND_URL (documentado en README/.env.example).
+# Si no está configurada (desarrollo local), permite cualquier origen.
+CORS(app, origins=os.environ.get("FRONTEND_URL") or "*")
 
 # ─── ZONA HORARIA DEL NEGOCIO ─────────────────────────────────────────────────
 # Todas las reglas de negocio con fecha (cortes de interés, "días para corte",
@@ -589,6 +591,7 @@ def delete_usuario(uid):
     return jsonify({"mensaje": "Usuario eliminado"})
 
 @app.route("/api/roles", methods=["GET"])
+@requiere_rol("administrador")
 def get_roles():
     conn = get_db()
     cur = conn.cursor()
@@ -1346,7 +1349,8 @@ def add_ahorro():
     except Exception as e:
         conn.rollback()
         conn.close()
-        return jsonify({"error": f"No se pudo registrar el ahorro: {str(e)}"}), 500
+        app.logger.error(f"No se pudo registrar el ahorro: {e}")
+        return jsonify({"error": "No se pudo registrar el ahorro"}), 500
     conn.close()
     return jsonify({"id": nuevo_id}), 201
 
@@ -1645,6 +1649,7 @@ def get_mis_datos():
 # ─── RUTAS: ALERTAS Y CONFIGURACIÓN ──────────────────────────────────────────
 
 @app.route("/api/configuracion/dias_anticipacion", methods=["GET"])
+@requiere_rol("administrador")
 def get_dias_anticipacion():
     conn = get_db()
     cur = conn.cursor()
@@ -1867,7 +1872,8 @@ def exportar_backup_completo():
         partes.append(_generar_vistas(cur))
         partes.append("\nCOMMIT;\n")
     except Exception as e:
-        return jsonify({"error": f"Error al generar el backup: {str(e)}"}), 500
+        app.logger.error(f"Error al generar el backup: {e}")
+        return jsonify({"error": "Error al generar el backup"}), 500
     finally:
         conn.close()
 
@@ -1909,9 +1915,10 @@ def restaurar_backup_completo():
         conn.commit()
     except Exception as e:
         conn.rollback()
+        app.logger.error(f"Restauración de backup fallida: {e}")
         return jsonify({
-            "error": "La restauración falló, no se aplicó ningún cambio (rollback automático)",
-            "detalle": str(e)
+            "error": "La restauración falló, no se aplicó ningún cambio (rollback automático). "
+                     "Revisa los logs del servidor para más detalle."
         }), 500
     finally:
         conn.close()
@@ -2619,7 +2626,8 @@ def solicitar_reset_password():
     try:
         enviar_correo(row["correo"], "GONZA — Código para restablecer contraseña", cuerpo)
     except Exception as e:
-        return jsonify({"error": f"No se pudo enviar el correo: {str(e)}"}), 500
+        app.logger.error(f"No se pudo enviar el correo de reset a {row['correo']}: {e}")
+        return jsonify({"error": "No se pudo enviar el correo, intenta de nuevo más tarde"}), 500
 
     return jsonify({
         "mensaje": f"Código enviado a {row['correo'][:3]}***",

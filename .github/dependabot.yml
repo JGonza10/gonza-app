@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Backend: dependencias de Python (requirements*.txt)
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+
+  # Frontend: dependencias de Node (package.json)
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+
+  # Acciones usadas en el workflow de CI
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
