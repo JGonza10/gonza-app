@@ -483,11 +483,11 @@ function ModPrestamos() {
           <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.oxford }}>
             Préstamos activos ({activosFiltrados.length}{busqueda ? ` de ${activos.length}` : ""})
           </p>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <div style={{ position: "relative" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ position: "relative", flex: "1 1 160px", maxWidth: 220 }}>
               <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", fontSize: 13 }}>🔍</span>
               <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar deudor..."
-                style={{ paddingLeft: 28, paddingRight: 28, paddingTop: 6, paddingBottom: 6, border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12, color: C.navy, background: C.lightGray, width: 180 }}/>
+                style={{ paddingLeft: 28, paddingRight: 28, paddingTop: 6, paddingBottom: 6, border: `1px solid ${C.border}`, borderRadius: 2, fontSize: 12, color: C.navy, background: C.lightGray, width: "100%" }}/>
               {busqueda && <button onClick={() => setBusqueda("")} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", fontSize: 14, color: C.oxford }}>✕</button>}
             </div>
             <button onClick={() => setOrdenFecha(o => o === "asc" ? "desc" : "asc")}
