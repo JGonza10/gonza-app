@@ -8,9 +8,9 @@
    THEMES en el JS del hub). Se portan las 4, con el mismo id:
      nexus   → oro + cian sobre negro azulado (el "de fábrica")
      gonza   → cian + violeta, con dorado cálido en los enlaces
-     claro   → fondo claro, azul + morado, para trabajar de día
+     champs  → oro + marino sobre fondo claro, para trabajar de día
      grafito → gris neutro sin brillos, para sesiones largas
-   Se elige poniendo  <html data-tema="nexus|gonza|claro|grafito">  (ver
+   Se elige poniendo  <html data-tema="nexus|gonza|champs|grafito">  (ver
    theme.js → aplicarTema/TEMAS). "nexus" es el valor por defecto (:root sin
    atributo, para que no haya parpadeo antes de que corra el JS).
    Ubicación: frontend/src/estilos.css   →  importar en index.js
@@ -85,35 +85,40 @@
   --scan:.03;
 }
 
-/* ── TEMA: CLARO (azul + morado, gris muy suave — nunca blanco puro) ──────── */
-/* --panel a #FFFFFF puro deslumbraba en pantalla; se baja a un gris azulado
+/* ── TEMA: CLARO / "Champs" (oro + marino, gris muy suave — nunca blanco puro) ── */
+/* --panel a #FFFFFF puro deslumbraba en pantalla; se usa un gris azulado
    casi imperceptible (~97% de luminosidad) que se sigue leyendo como "tema
-   claro" pero sin el brillo directo del blanco absoluto. */
-:root[data-tema="claro"] {
-  --bg:#EBEFF4;      --bg2:#E2E7EE;
-  --panel:#F7F9FC;   --panel2:#EEF2F7;  --raise:#E5EAF1;
-  --line:rgba(10,95,192,.18);    --line2:rgba(107,55,201,.16);
-  --blue:#1C7ED6;    --blue2:#0F5FA8;   --cyan:#6B37C9;
-  --red:#C1272D;     --yellow:#0A5FC0;  --green:#0E7A57;
-  --purple:#B0288C;  --orange:#C2540C;
-  --text:#0F1C2B;    --muted:#42566E;   --muted2:#75899E;
+   claro" pero sin el brillo directo del blanco absoluto.
+   Identidad "Champs": oro (--yellow) + marino (--blue) como acentos
+   principales, con un guiño a medallas — plata en --purple, bronce en
+   --orange. --red/--green se dejan en sus tonos semánticos (alerta/éxito). */
+:root[data-tema="champs"] {
+  --bg:#EEF1F6;      --bg2:#E5E9F0;
+  --panel:#F8F9FB;   --panel2:#EFF1F5;  --raise:#E6E9EF;
+  --line:rgba(10,31,68,.20);     --line2:rgba(140,140,150,.22);
+  --blue:#0A1F44;    --blue2:#071630;   --cyan:#3D5A80;
+  --red:#C1272D;     --yellow:#B8860B;  --green:#0E7A57;
+  --purple:#8A8F98;  --orange:#A0522D;
+  --text:#0A1F44;    --muted:#4A5A72;   --muted2:#78879C;
 
-  --tint-blue:#DCEAFA;
-  --tint-yellow:#DCE9F8;
+  --tint-blue:#DCE6F4;
+  --tint-yellow:#F5E7C6;
   --tint-red:#F6DEDF;
   --tint-green:#DCEFE8;
-  --tint-orange:#F5E1D3;
+  --tint-orange:#EEDFD2;
 
   --campo:#F0F3F8;
   --fondo-app:
-    radial-gradient(1100px 620px at 18% -8%,rgba(10,95,192,.05) 0%,transparent 58%),
-    radial-gradient(900px 520px at 96% 4%,rgba(107,55,201,.045) 0%,transparent 52%),
-    linear-gradient(168deg,#EBEFF4 0%,#E7EBF1 48%,#E2E7EE 100%);
-  --panel-fondo:#F7F9FC;
-  --side-fondo:linear-gradient(180deg,#11150D,#05080E);  /* la barra lateral se
-     queda oscura en los 4 temas: es la firma de la marca, igual que en Nexus */
-  --hover-fila:rgba(15,28,43,.03);
-  --grad:linear-gradient(180deg,#0A5FC0 0%,#084A99 100%);
+    radial-gradient(1100px 620px at 18% -8%,rgba(184,134,11,.06) 0%,transparent 58%),
+    radial-gradient(900px 520px at 96% 4%,rgba(10,31,68,.05) 0%,transparent 52%),
+    linear-gradient(168deg,#EEF1F6 0%,#EAEDF3 48%,#E5E9F0 100%);
+  --panel-fondo:#F8F9FB;
+  --side-fondo:linear-gradient(180deg,#0A1F44,#050D1F);  /* la barra lateral
+     navy: firma de marca coherente con Champs (en los otros temas se queda
+     oscura igual, aquí además hace juego con el acento marino) */
+  --hover-fila:rgba(10,31,68,.035);
+  --grad:linear-gradient(180deg,#FFD700 0%,#B8860B 100%);  /* aquí sí se usa
+     el dorado brillante: es decorativo (barras, no texto) */
   --scan:0;
 }
 
@@ -161,7 +166,7 @@ body {
 }
 
 /* Barrido de líneas de escaneo, la firma HUD de Nexus. Muy tenue: no debe
-   competir con las cifras. La intensidad la da --scan (0 en claro/grafito,
+   competir con las cifras. La intensidad la da --scan (0 en champs/grafito,
    apagándola por completo ahí, igual que en el propio Nexus). */
 body::before {
   content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
@@ -253,7 +258,7 @@ h1, h2, h3 {
   background:color-mix(in srgb, var(--yellow) 4%, transparent);
   box-shadow:0 0 22px -10px var(--c), inset 0 0 26px -20px var(--c);
 }
-:root[data-tema="claro"] .kpi { background:var(--panel) }
+:root[data-tema="champs"] .kpi { background:var(--panel) }
 .kpi .k { font-family:var(--m); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); font-weight:500 }
 .kpi .v {
   font-family:var(--m); font-variant-numeric:tabular-nums;

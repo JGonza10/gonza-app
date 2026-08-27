@@ -68,8 +68,8 @@ export const TEMAS = [
     bg: "#05080E", muestra: ["#05080E", "#FFC94A", "#8FE9FF", "#B49CFF", "#D62B34"] },
   { id: "gonza",   nombre: "Gonza Systems", descripcion: "Cian y violeta, con dorado cálido en los enlaces.",
     bg: "#040B16", muestra: ["#040B16", "#5FD3FF", "#A98BFF", "#FFC46B", "#F0555C"] },
-  { id: "claro",   nombre: "Taller",  descripcion: "Fondo claro para trabajar de día o con proyector.",
-    bg: "#F1F4F8", muestra: ["#F1F4F8", "#0A5FC0", "#6B37C9", "#B0288C", "#C1272D"] },
+  { id: "champs",  nombre: "Champs",  descripcion: "Oro y marino sobre fondo claro, con guiño a medallas.",
+    bg: "#EEF1F6", muestra: ["#EEF1F6", "#B8860B", "#0A1F44", "#A0522D", "#C1272D"] },
   { id: "grafito", nombre: "Grafito", descripcion: "Gris neutro, sin brillos. Para sesiones largas.",
     bg: "#121417", muestra: ["#121417", "#E7EAEE", "#7FB2D9", "#C9A66B", "#E0645F"] },
 ];
@@ -78,7 +78,7 @@ const IDS_TEMAS = TEMAS.map(t => t.id);
 
 /**
  * Aplica el tema. Llamar desde App.jsx en lugar de Object.assign(C, ...).
- * @param {"nexus"|"gonza"|"claro"|"grafito"} tema
+ * @param {"nexus"|"gonza"|"champs"|"grafito"} tema
  */
 export function aplicarTema(tema) {
   const id = IDS_TEMAS.includes(tema) ? tema : "nexus";
