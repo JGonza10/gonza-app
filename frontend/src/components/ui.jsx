@@ -144,10 +144,10 @@ const esImporte = v =>
   typeof v === "number" ||
   (typeof v === "string" && /^\s*-?\$?[\d,]+(\.\d+)?\s*%?\s*$/.test(v));
 
-export function Tabla({ headers, rows, empty = "Sin registros" }) {
+export function Tabla({ headers, rows, empty = "Sin registros", className }) {
   return (
     <div className="wrap">
-      <table className="tbl">
+      <table className={`tbl${className ? " " + className : ""}`}>
         <thead>
           <tr>{headers.map((h, i) => <th key={i}>{h}</th>)}</tr>
         </thead>

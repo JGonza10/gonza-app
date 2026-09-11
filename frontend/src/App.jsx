@@ -1282,10 +1282,15 @@ function ModBalanceCaja({ onVerDeudor }) {
       <Card>
         <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Desglose por persona</p>
         <Tabla
+          className="num-der"
           headers={["Persona", "Préstamos activos", "Total prestado", "Total aportado", "Saldo"]}
           empty="Sin datos de préstamos ni aportaciones"
           rows={personas.map(p => [
-            <Btn small color={C.navy} onClick={() => onVerDeudor(p.cliente_id)}>{p.nombre || "—"}</Btn>,
+            <button key={p.cliente_id} onClick={() => onVerDeudor(p.cliente_id)}
+              style={{ background: "transparent", border: "none", padding: 0, color: C.navy,
+                fontSize: "inherit", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
+              {p.nombre || "—"}
+            </button>,
             p.prestamos.length,
             fmt(p.total_prestado),
             fmt(p.total_aportado),

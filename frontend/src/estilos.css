@@ -317,6 +317,10 @@ h1, h2, h3 {
 .tbl td.num { text-align:right; white-space:nowrap }
 .tbl .vacio { text-align:center; padding:34px 12px; color:var(--muted) }
 .wrap { overflow-x:auto }
+/* Tablas donde TODAS las columnas salvo la primera son numéricas/dinero:
+   el encabezado se alinea a la derecha igual que el dato, para que no
+   queden desfasados entre sí (ver .tbl th, siempre a la izquierda por defecto). */
+.tbl.num-der th:not(:first-child) { text-align:right }
 
 /* ── ETIQUETAS DE ESTADO ─────────────────────────────────────────────────── */
 .tag {

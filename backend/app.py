@@ -2494,7 +2494,7 @@ def enviar_informe_resumen():
     resumen = cur.fetchone()
 
     cur.execute("""
-        SELECT deudor_nombre, SUM(monto) AS total
+        SELECT deudor_nombre, SUM(monto - capital_abonado) AS total
         FROM prestamos WHERE pagado = FALSE AND monto > 0 AND eliminado_en IS NULL
         GROUP BY deudor_nombre ORDER BY total DESC LIMIT 5;
     """)
@@ -2911,7 +2911,7 @@ def enviar_correo_completo():
     resumen = cur.fetchone()
 
     cur.execute("""
-        SELECT deudor_nombre, SUM(monto) AS total
+        SELECT deudor_nombre, SUM(monto - capital_abonado) AS total
         FROM prestamos WHERE pagado = FALSE AND monto > 0 AND eliminado_en IS NULL
         GROUP BY deudor_nombre ORDER BY total DESC LIMIT 5;
     """)
@@ -3072,7 +3072,10 @@ def _datos_informe_deudor(cliente_id):
 
     # Totales
     activos = [p for p in prestamos if not p["pagado"] and p["monto"] > 0]
-    total_prestado    = sum(float(p["monto"] or 0) for p in activos)
+    # Saldo pendiente real (monto - capital_abonado), no el monto original:
+    # si no se resta lo ya abonado, el informe muestra como "prestado" capital
+    # que el deudor ya pagó.
+    total_prestado    = sum(float(p["saldo_capital"] or 0) for p in activos)
     total_interes_mes = sum(float(p["interes_mensual"] or 0) for p in activos)
     total_pendiente   = sum(float(c["monto_interes"] or 0) for c in cortes if not c["pagado"])
     total_cobrado     = sum(float(c["monto_pagado"] or 0) for c in cortes)
@@ -3143,7 +3146,7 @@ def _generar_pdf_informe(datos):
 
     r = datos["resumen"]
     resumen_data = [
-        ["Total prestado (activos)", f"${r['total_prestado']:,.2f}"],
+        ["Capital prestado activo", f"${r['total_prestado']:,.2f}"],
         ["Interés mensual esperado", f"${r['total_interes_mensual']:,.2f}"],
         ["Interés pendiente acumulado", f"${r['interes_pendiente_acumulado']:,.2f}"],
         ["Interés cobrado (histórico)", f"${r['interes_cobrado_total']:,.2f}"],
@@ -3260,7 +3263,7 @@ def _generar_xlsx_informe_deudor(datos):
     ws.append([])
     r = datos["resumen"]
     for etiqueta, valor in [
-        ("Total prestado (activos)", r["total_prestado"]),
+        ("Capital prestado activo", r["total_prestado"]),
         ("Interés mensual esperado", r["total_interes_mensual"]),
         ("Interés pendiente acumulado", r["interes_pendiente_acumulado"]),
         ("Interés cobrado (histórico)", r["interes_cobrado_total"]),
