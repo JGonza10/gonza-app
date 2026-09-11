@@ -1257,6 +1257,46 @@ function ModalInformeDeudor({ clienteId, onClose }) {
 }
 
 // ── MÓDULO: RESUMEN ───────────────────────────────────────────────────────────
+// ── BALANCE CAJA VS PRÉSTAMOS ────────────────────────────────────────────────
+// Compara, por persona, lo que debe en préstamos activos contra lo que ha
+// aportado a la caja. saldo = total_aportado - total_prestado
+// (positivo = aportó de más, negativo = debe de más).
+function ModBalanceCaja({ onVerDeudor }) {
+  const { data, loading } = useApiData("/api/reportes/balance-caja");
+
+  if (loading) return <Cargando texto="Cargando balance..."/>;
+
+  const personas = data.personas || [];
+  const totales  = data.totales  || { total_prestado: 0, total_aportado: 0, saldo: 0 };
+
+  return (
+    <div>
+      <SectionTitle>Balance: préstamos vs aportaciones a la caja</SectionTitle>
+
+      <Kpis>
+        <Kpi etiqueta="Total prestado (saldo activo)" valor={fmt(totales.total_prestado)} tono="blue"/>
+        <Kpi etiqueta="Total aportado a la caja" valor={fmt(totales.total_aportado)} tono="orange"/>
+        <Kpi etiqueta="Saldo del grupo" valor={fmt(totales.saldo)} tono={totales.saldo >= 0 ? "green" : "red"}/>
+      </Kpis>
+
+      <Card>
+        <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Desglose por persona</p>
+        <Tabla
+          headers={["Persona", "Préstamos activos", "Total prestado", "Total aportado", "Saldo"]}
+          empty="Sin datos de préstamos ni aportaciones"
+          rows={personas.map(p => [
+            <Btn small color={C.navy} onClick={() => onVerDeudor(p.cliente_id)}>{p.nombre || "—"}</Btn>,
+            p.prestamos.length,
+            fmt(p.total_prestado),
+            fmt(p.total_aportado),
+            fmt(p.saldo),
+          ])}
+        />
+      </Card>
+    </div>
+  );
+}
+
 function ModResumen({ irA }) {
   const { data: prestamos, loading: lp } = useApiData("/api/prestamos");
   const { data: ahorros,   loading: la } = useApiData("/api/ahorros");
@@ -2239,6 +2279,7 @@ const MENU = [
   { id: "caja",       label: "Caja",              icon: "💰" },
   { id: "ahorro",     label: "Ahorro",            icon: "🏦" },
   { id: "resumen",    label: "Resumen",           icon: "📊" },
+  { id: "balance",    label: "Balance caja",      icon: "⚖️" },
   { id: "plazos",     label: "Pagos a plazos",    icon: "📅" },
   { id: "config",     label: "Configuración",     icon: "⚙️" },
 ];
@@ -2404,6 +2445,7 @@ export default function App() {
       </nav>
       <main style={{ padding: "20px 22px", overflowY: "auto", minHeight: "calc(100vh - 100px)" }}>
         {sec === "resumen"   && <ModResumen irA={setSec}/>}
+        {sec === "balance"   && <ModBalanceCaja onVerDeudor={setDeudorGlobal}/>}
         {sec === "prestamos" && <ModPrestamos/>}
         {sec === "ahorro"    && <ModAhorro/>}
         {sec === "caja"      && <ModCaja/>}

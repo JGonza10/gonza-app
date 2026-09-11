@@ -2026,6 +2026,91 @@ def get_alertas():
     rows = cur.fetchall()
     conn.close()
     return jsonify(list(rows))
+
+
+@app.route("/api/reportes/balance-caja", methods=["GET"])
+@requiere_lectura("consultor")
+def get_balance_caja_prestamos():
+    """
+    Compara, por persona, el saldo de capital que aún debe en préstamos
+    activos contra el capital que ha aportado a la caja de ahorro.
+    saldo = total_aportado - total_prestado
+      positivo → aportó más de lo que debe
+      negativo → debe más de lo que ha aportado
+    Incluye el desglose de cada préstamo activo de la persona.
+    """
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Préstamos activos (no pagados) por cliente, con su saldo de capital
+    cur.execute("""
+        SELECT p.id, p.cliente_id, p.deudor_nombre, p.fecha_prestamo::text,
+               p.monto, p.capital_abonado,
+               (p.monto - p.capital_abonado) AS saldo_capital
+        FROM prestamos p
+        WHERE p.eliminado_en IS NULL AND p.pagado = FALSE AND p.cliente_id IS NOT NULL
+        ORDER BY p.fecha_prestamo ASC;
+    """)
+    prestamos = [dict(r) for r in cur.fetchall()]
+
+    # Capital aportado a la caja por cliente (suma real de sus movimientos)
+    cur.execute("""
+        SELECT c.cliente_id, c.participante,
+               COALESCE(SUM(cm.monto), 0) AS aportado
+        FROM caja c
+        LEFT JOIN caja_movimientos cm ON cm.caja_id = c.id AND cm.eliminado_en IS NULL
+        WHERE c.eliminado_en IS NULL AND c.cliente_id IS NOT NULL
+        GROUP BY c.cliente_id, c.participante;
+    """)
+    aportaciones = [dict(r) for r in cur.fetchall()]
+
+    conn.close()
+
+    personas = {}
+
+    for p in prestamos:
+        cid = p["cliente_id"]
+        acc = personas.setdefault(cid, {
+            "cliente_id": cid, "nombre": p["deudor_nombre"],
+            "prestamos": [], "total_prestado": 0.0, "total_aportado": 0.0,
+        })
+        saldo_prestamo = float(p["saldo_capital"] or 0)
+        acc["prestamos"].append({
+            "id": p["id"],
+            "fecha_prestamo": p["fecha_prestamo"],
+            "monto": float(p["monto"] or 0),
+            "saldo_capital": saldo_prestamo,
+        })
+        acc["total_prestado"] += saldo_prestamo
+
+    for a in aportaciones:
+        cid = a["cliente_id"]
+        acc = personas.setdefault(cid, {
+            "cliente_id": cid, "nombre": a["participante"],
+            "prestamos": [], "total_prestado": 0.0, "total_aportado": 0.0,
+        })
+        acc["total_aportado"] += float(a["aportado"] or 0)
+        if not acc["nombre"]:
+            acc["nombre"] = a["participante"]
+
+    resultado = []
+    for acc in personas.values():
+        acc["total_prestado"] = round(acc["total_prestado"], 2)
+        acc["total_aportado"] = round(acc["total_aportado"], 2)
+        acc["saldo"] = round(acc["total_aportado"] - acc["total_prestado"], 2)
+        resultado.append(acc)
+
+    resultado.sort(key=lambda x: (x["nombre"] or "").lower())
+
+    totales = {
+        "total_prestado": round(sum(p["total_prestado"] for p in resultado), 2),
+        "total_aportado": round(sum(p["total_aportado"] for p in resultado), 2),
+    }
+    totales["saldo"] = round(totales["total_aportado"] - totales["total_prestado"], 2)
+
+    return jsonify({"personas": resultado, "totales": totales})
+
+
 # ─── ENVÍO DE CORREOS DE ALERTA ───────────────────────────────────────────────
 
 def enviar_correo(destinatario, asunto, cuerpo_html, adjuntos=None):
