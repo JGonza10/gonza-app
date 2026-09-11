@@ -104,6 +104,15 @@ _serializer = itsdangerous.URLSafeTimedSerializer(SECRET_KEY)
 TOKEN_SESION_MAX_AGE = 8 * 60 * 60   # 8 horas
 TOKEN_RESET_MAX_AGE = 15 * 60        # 15 minutos
 
+# Firma para los backups: /configuracion/restore solo debe ejecutar un .sql
+# que haya salido de /configuracion/backup, nunca cualquier archivo que
+# alguien suba (eso permitiría correr SQL arbitrario, incluida ejecución de
+# comandos en el servidor de BD vía COPY ... TO/FROM PROGRAM). Sin esta firma,
+# un admin con la sesión comprometida podía usar el restore como una puerta
+# trasera de ejecución de SQL.
+_firmador_backup = itsdangerous.Signer(SECRET_KEY, salt="backup-gonza")
+MARCADOR_FIRMA_BACKUP = "\n-- FIRMA-GONZA:"
+
 
 def _generar_token_sesion(username):
     return _serializer.dumps({"username": username}, salt="sesion")
@@ -1878,6 +1887,9 @@ def exportar_backup_completo():
         conn.close()
 
     contenido = "".join(partes)
+    firma = _firmador_backup.get_signature(contenido.encode("utf-8")).decode("ascii")
+    contenido += f"{MARCADOR_FIRMA_BACKUP} {firma}\n"
+
     fecha = ahora_mx().strftime("%Y-%m-%d_%H-%M-%S")
     nombre_archivo = f"backup_gonza_{fecha}.sql"
 
@@ -1908,10 +1920,26 @@ def restaurar_backup_completo():
     if not contenido.strip():
         return jsonify({"error": "El archivo está vacío"}), 400
 
+    idx_marcador = contenido.rfind(MARCADOR_FIRMA_BACKUP)
+    if idx_marcador == -1:
+        return jsonify({
+            "error": "Este archivo no tiene la firma de un backup generado por este "
+                     "sistema (botón 'Descargar backup' en Configuración). Por seguridad, "
+                     "restore solo acepta backups propios, no cualquier archivo .sql."
+        }), 400
+
+    cuerpo = contenido[:idx_marcador]
+    firma = contenido[idx_marcador + len(MARCADOR_FIRMA_BACKUP):].strip()
+    if not _firmador_backup.verify_signature(cuerpo.encode("utf-8"), firma.encode("ascii", errors="ignore")):
+        return jsonify({
+            "error": "La firma del backup no es válida — el archivo fue modificado o no "
+                     "proviene de este sistema. No se ejecutó nada."
+        }), 400
+
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute(contenido)
+        cur.execute(cuerpo)
         conn.commit()
     except Exception as e:
         conn.rollback()
