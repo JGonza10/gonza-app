@@ -30,6 +30,11 @@ import pyotp
 import qrcode
 import io
 import base64
+from dotenv import load_dotenv
+
+# En Railway las variables ya vienen inyectadas; en local carga backend/.env
+# (documentado en el README) para que "python app.py" funcione sin pasos extra.
+load_dotenv()
 
 app = Flask(__name__)
 # En producción restringe a FRONTEND_URL (documentado en README/.env.example).
@@ -3491,4 +3496,5 @@ def descargar_pagare(pid):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+    # Solo esta PC por defecto; producción usa gunicorn (Procfile), no esta línea.
+    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=port, debug=False, threaded=True)
