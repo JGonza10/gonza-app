@@ -2460,6 +2460,7 @@ export default function App() {
             verClientes={verClientes} setVerClientes={setVerClientes}
             verUsuarios={verUsuarios} setVerUsuarios={setVerUsuarios}/>
         )}
+        <p className="kestrel-copy" style={{ textAlign: "center", fontSize: "0.75rem", opacity: 0.6, margin: "24px 0 12px" }}><style>{".kestrel-link{color:inherit;text-decoration:none}.kestrel-link:hover{text-decoration:underline}"}</style>© <a className="kestrel-link" href="https://kestrel-ia.up.railway.app/" target="_blank" rel="noopener noreferrer">Kestrel</a> {new Date().getFullYear()}</p>
       </main>
 
       {verClientes && (
