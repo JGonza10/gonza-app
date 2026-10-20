@@ -1263,19 +1263,21 @@ function ModalInformeDeudor({ clienteId, onClose }) {
 // (positivo = aportó de más, negativo = debe de más).
 function ModBalanceCaja({ onVerDeudor }) {
   const { data, loading } = useApiData("/api/reportes/balance-caja");
+  const [abierto, setAbierto] = useState(null);
 
   if (loading) return <Cargando texto="Cargando balance..."/>;
 
   const personas = data.personas || [];
   const totales  = data.totales  || { total_prestado: 0, total_aportado: 0, saldo: 0 };
+  const detalle  = personas.find(p => p.cliente_id === abierto);
 
   return (
     <div>
       <SectionTitle>Balance: préstamos vs aportaciones a la caja</SectionTitle>
 
       <Kpis>
-        <Kpi etiqueta="Total prestado (saldo activo)" valor={fmt(totales.total_prestado)} tono="blue"/>
-        <Kpi etiqueta="Total aportado a la caja" valor={fmt(totales.total_aportado)} tono="orange"/>
+        <Kpi etiqueta="Debe de capital (préstamos activos)" valor={fmt(totales.total_prestado)} tono="blue"/>
+        <Kpi etiqueta="Aportado a caja" valor={fmt(totales.total_aportado)} tono="orange"/>
         <Kpi etiqueta="Saldo del grupo" valor={fmt(totales.saldo)} tono={totales.saldo >= 0 ? "green" : "red"}/>
       </Kpis>
 
@@ -1283,7 +1285,7 @@ function ModBalanceCaja({ onVerDeudor }) {
         <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>Desglose por persona</p>
         <Tabla
           className="num-der"
-          headers={["Persona", "Préstamos activos", "Total prestado", "Total aportado", "Saldo"]}
+          headers={["Persona", "Préstamos activos", "Debe de capital", "Aportado a caja", "Saldo"]}
           empty="Sin datos de préstamos ni aportaciones"
           rows={personas.map(p => [
             <button key={p.cliente_id} onClick={() => onVerDeudor(p.cliente_id)}
@@ -1291,13 +1293,44 @@ function ModBalanceCaja({ onVerDeudor }) {
                 fontSize: "inherit", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
               {p.nombre || "—"}
             </button>,
-            p.prestamos.length,
+            p.prestamos.length > 0
+              ? <button key={`d${p.cliente_id}`} className="btn gh sm"
+                  title="Ver el desglose de sus préstamos activos"
+                  onClick={() => setAbierto(abierto === p.cliente_id ? null : p.cliente_id)}>
+                  {p.prestamos.length} {abierto === p.cliente_id ? "▴" : "▾"}
+                </button>
+              : 0,
             fmt(p.total_prestado),
             fmt(p.total_aportado),
             fmt(p.saldo),
           ])}
         />
       </Card>
+
+      {detalle && (
+        <Card>
+          <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: C.oxford }}>
+            Préstamos activos de {detalle.nombre}
+          </p>
+          <Tabla
+            className="num-der"
+            headers={["Préstamo", "Fecha", "Monto original", "Capital abonado", "Debe de capital", "Nota"]}
+            rows={detalle.prestamos.map(pr => [
+              `#${pr.id}`,
+              fmtFecha(pr.fecha_prestamo),
+              fmt(pr.monto),
+              fmt(pr.capital_abonado),
+              fmt(pr.saldo_capital),
+              pr.nota || "—",
+            ])}
+          />
+          <p style={{ margin: "10px 0 0", fontSize: 12, color: C.oxford, opacity: 0.75 }}>
+            Monto original {fmt(detalle.prestamos.reduce((a, pr) => a + pr.monto, 0))} − abonado{" "}
+            {fmt(detalle.prestamos.reduce((a, pr) => a + pr.capital_abonado, 0))} = debe{" "}
+            {fmt(detalle.total_prestado)}. Aportado a caja {fmt(detalle.total_aportado)} → saldo {fmt(detalle.saldo)}.
+          </p>
+        </Card>
+      )}
     </div>
   );
 }

@@ -2078,7 +2078,7 @@ def get_balance_caja_prestamos():
     # Préstamos activos (no pagados) por cliente, con su saldo de capital
     cur.execute("""
         SELECT p.id, p.cliente_id, p.deudor_nombre, p.fecha_prestamo::text,
-               p.monto, p.capital_abonado,
+               p.monto, p.capital_abonado, p.nota,
                (p.monto - p.capital_abonado) AS saldo_capital
         FROM prestamos p
         WHERE p.eliminado_en IS NULL AND p.pagado = FALSE AND p.cliente_id IS NOT NULL
@@ -2112,7 +2112,9 @@ def get_balance_caja_prestamos():
             "id": p["id"],
             "fecha_prestamo": p["fecha_prestamo"],
             "monto": float(p["monto"] or 0),
+            "capital_abonado": float(p["capital_abonado"] or 0),
             "saldo_capital": saldo_prestamo,
+            "nota": p["nota"] or "",
         })
         acc["total_prestado"] += saldo_prestamo
 
