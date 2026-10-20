@@ -1,7 +1,7 @@
 flask==3.0.3
 flask-cors==4.0.1
 flask-limiter==3.8.0
-psycopg2-binary==2.9.9
+psycopg2-binary>=2.9.13
 gunicorn==22.0.0
 requests
 python-dateutil
@@ -11,3 +11,4 @@ pyotp==2.9.0
 qrcode==7.4.2
 pillow==10.4.0
 tzdata
+python-dotenv
