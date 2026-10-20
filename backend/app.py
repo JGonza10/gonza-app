@@ -243,6 +243,19 @@ def _asegurar_tablas_auxiliares():
         cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_habilitado BOOLEAN NOT NULL DEFAULT FALSE;")
 
         conn.commit()
+
+        # Cada integrante de la caja es un cliente distinto: dos cajas activas
+        # no pueden compartir cliente_id (así se sumaba la caja de otra persona
+        # al balance). Va aparte para que, si hubiera repetidos, no deshaga lo anterior.
+        try:
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_caja_cliente_activo
+                ON caja (cliente_id) WHERE eliminado_en IS NULL;
+            """)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            app.logger.warning(f"Hay clientes con más de una caja activa; no se creó el índice único: {e}")
         conn.close()
     except Exception as e:
         app.logger.warning(f"No se pudo verificar/crear tablas auxiliares: {e}")
@@ -1460,6 +1473,13 @@ def add_caja():
         return jsonify({"error": "Cliente no encontrado"}), 400
 
     participante = f"{cliente['nombre']} {cliente['apellido_pat']} {cliente['apellido_mat'] or ''}".strip()
+
+    # Un cliente = una caja: si ya tiene una activa, no se crea otra
+    cur.execute("SELECT id FROM caja WHERE cliente_id = %s AND eliminado_en IS NULL;", (data["cliente_id"],))
+    existente = cur.fetchone()
+    if existente:
+        conn.close()
+        return jsonify({"error": f"{participante} ya está en la caja (#{existente['id']})"}), 400
 
     cur.execute("""
         INSERT INTO caja (participante, cliente_id, cuota, fecha_inicio, fecha, nota)

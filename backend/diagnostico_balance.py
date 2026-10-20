@@ -2,7 +2,7 @@
 Diagnóstico de solo lectura del balance caja vs préstamos de una persona.
 
 Uso (contra producción, con las variables del servicio Postgres de Railway):
-    railway run -p gonza-app -e production -s Postgres -- venv/Scripts/python.exe diagnostico_balance.py "ramon mejia"
+    railway run -p <ID del proyecto gonza-app> -e production -s Postgres -- venv/Scripts/python.exe diagnostico_balance.py "ramon mejia"
 
 La conexión se abre en modo READ ONLY: no puede modificar nada.
 """
@@ -28,6 +28,7 @@ def conectar():
 
 
 def main(texto):
+    sys.stdout.reconfigure(encoding="utf-8")  # la consola de Windows no imprime ⚠
     patron = "%" + "%".join(texto.split()) + "%"
     conn = conectar()
     cur = conn.cursor()
